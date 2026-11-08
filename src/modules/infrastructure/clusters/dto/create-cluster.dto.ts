@@ -14,6 +14,7 @@ import {
   IsUUID,
   IsPositive,
   Matches,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -22,6 +23,7 @@ import { RELEASE } from 'src/config/release.config';
 import { AsyncOperationResponseDto } from 'src/modules/common/dto';
 import { FirewallRuleDto } from 'src/modules/providers/dto/firewall.dto';
 import { HostnameMode } from 'src/modules/dns/enums/hostname-mode.enum';
+import type { ClusterHaLevel } from 'src/modules/cluster-ha/utils/cluster-ha.core';
 
 /**
  * DTO for VNet configuration during cluster creation
@@ -113,6 +115,36 @@ export class CreateClusterDto {
   @Min(0)
   @Max(19)
   workerCount: number;
+
+  @ApiPropertyOptional({
+    enum: ['standard', 'three-locations'],
+    default: 'standard',
+    description:
+      "`three-locations`: one server in each of the three locations the provider validated for this region, bought together and joined one at a time. Only offered where the provider declares such a layout; `region` is the first server's location and must be one for data. Needs `workerCount: 0`.",
+  })
+  @IsOptional()
+  @IsIn(['standard', 'three-locations'])
+  highAvailability?: ClusterHaLevel;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['cpx22', 'cx23'],
+    description:
+      'With `three-locations`: the sizes each location may take, in order of preference, all of one architecture. Each location gets the first one it has available. Omitted: `nodeSize` only.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  shapes?: string[];
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'With `three-locations`: when a location has none of `shapes` available, create the cluster in the others and leave that server to add later. Off: nothing is bought and the answer lists sizes every location has.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  completeLater?: boolean;
 
   @ApiPropertyOptional({
     example: false,

@@ -188,6 +188,123 @@ describe('ClusterOrchestrationService — retry safety', () => {
       ).rejects.toThrow('did not become Ready');
       expect(onTick).toHaveBeenCalledTimes(1);
     });
+
+    it('hands back the labels of the node that joined', async () => {
+      const readNode = jest.fn().mockResolvedValue({
+        metadata: {
+          labels: { 'node-role.kubernetes.io/control-plane': 'true' },
+        },
+        status: { conditions: [{ type: 'Ready', status: 'True' }] },
+      });
+      const service = build({
+        encryptionService: { decrypt: () => 'kubeconfig' },
+        kubernetesService: { getKubeClient: () => ({ coreApi: { readNode } }) },
+      });
+
+      await expect(
+        call(service, { ...CLUSTER, kubeconfigEncrypted: 'x' }, 'w-1', 1000, 0),
+      ).resolves.toEqual({ 'node-role.kubernetes.io/control-plane': 'true' });
+    });
+  });
+
+  describe('labelsOnceServer', () => {
+    type Labels = (
+      c: unknown,
+      name: string,
+      role: 'server' | 'agent',
+      labels: Record<string, string> | undefined,
+    ) => Promise<Record<string, string> | undefined>;
+    const call = (
+      service: ClusterOrchestrationService,
+      ...args: Parameters<Labels>
+    ) =>
+      (service as unknown as { labelsOnceServer: Labels }).labelsOnceServer(
+        ...args,
+      );
+    const plane = { 'node-role.kubernetes.io/control-plane': 'true' };
+
+    it('waits for the label K3s adds to a server shortly after it turns Ready', async () => {
+      const waitForNodeReady = jest
+        .fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(plane);
+      const service = build({ waitForNodeReady });
+
+      await expect(
+        call(
+          service,
+          { ...CLUSTER, kubeconfigEncrypted: 'x' },
+          'w-1',
+          'server',
+          {},
+        ),
+      ).resolves.toEqual(plane);
+      expect(waitForNodeReady).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not wait for an agent or a server already labelled', async () => {
+      const waitForNodeReady = jest.fn();
+      const service = build({ waitForNodeReady });
+
+      await call(
+        service,
+        { ...CLUSTER, kubeconfigEncrypted: 'x' },
+        'a',
+        'agent',
+        {},
+      );
+      await call(
+        service,
+        { ...CLUSTER, kubeconfigEncrypted: 'x' },
+        's',
+        'server',
+        plane,
+      );
+      expect(waitForNodeReady).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refuseUnlessServer', () => {
+    type Refuse = (
+      node: unknown,
+      k3sRole: 'server' | 'agent',
+      labels: Record<string, string> | undefined,
+    ) => Promise<void>;
+    const call = (
+      service: ClusterOrchestrationService,
+      ...args: Parameters<Refuse>
+    ) =>
+      (service as unknown as { refuseUnlessServer: Refuse }).refuseUnlessServer(
+        ...args,
+      );
+
+    it('fails a server that joined as an agent and leaves it an ordinary worker', async () => {
+      const save = jest.fn();
+      const service = build({ nodeRepository: { save } });
+      const node = {
+        serverName: 'wl-worker-2',
+        status: 'provisioning',
+        metadata: { workerIndex: 2, haRole: 'server' },
+      };
+
+      await expect(call(service, node, 'server', {})).rejects.toThrow(
+        'wl-worker-2 joined as an ordinary worker',
+      );
+      expect(node.status).toBe('error');
+      expect(node.metadata).not.toHaveProperty('haRole');
+      expect(node.metadata).toMatchObject({ workerIndex: 2 });
+      expect(save).toHaveBeenCalledWith(node);
+    });
+
+    it('lets a real server and every agent through', async () => {
+      const save = jest.fn();
+      const service = build({ nodeRepository: { save } });
+      const plane = { 'node-role.kubernetes.io/control-plane': 'true' };
+
+      await call(service, { serverName: 's', metadata: {} }, 'server', plane);
+      await call(service, { serverName: 'a', metadata: {} }, 'agent', {});
+      expect(save).not.toHaveBeenCalled();
+    });
   });
 
   describe('fetchKubeconfigFromMaster', () => {

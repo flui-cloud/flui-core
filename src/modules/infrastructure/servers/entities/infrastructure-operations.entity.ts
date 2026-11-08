@@ -1,6 +1,7 @@
 // File: src/modules/infrastructure/servers/entities/infrastructure-operations.entity.ts
 
 import { CloudProvider } from 'src/modules/providers/enums/cloud-provider.enum';
+import type { HaCreationPlan } from '../../clusters/utils/ha-creation-plan.core';
 import {
   BeforeInsert,
   Entity,
@@ -384,6 +385,8 @@ export interface CreateClusterOperationMetadata extends BaseOperationMetadata {
    * egress IPs, not just what's on the request DTO).
    */
   desiredFirewallRules?: FirewallRuleDto[];
+  /** A cluster across three locations: the servers decided before any was bought. */
+  haPlan?: HaCreationPlan;
 }
 
 export interface DeleteClusterOperationMetadata extends BaseOperationMetadata {

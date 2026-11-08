@@ -15,7 +15,12 @@ import {
   NodeType,
   NodeStatus,
 } from '../entities/cluster-node.entity';
-import { haRoleMetadata, HaNodeRole, k3sRoleOf } from '../utils/ha-node-role';
+import {
+  haRoleMetadata,
+  HaNodeRole,
+  k3sRoleOf,
+  serverJoinRefusal,
+} from '../utils/ha-node-role';
 import {
   HostFirewallBoot,
   K3sMasterConfig,
@@ -60,6 +65,43 @@ import {
   installLogTarget,
 } from '../utils/install-log-target.util';
 import { managementNetworkOn } from '../../networking/management-network.state';
+import { PlannedServer } from '../utils/ha-creation-plan.core';
+
+// A server first syncs etcd from the cluster, so it is given longer than a worker.
+const SERVER_JOIN_TIMEOUT_MS = 600_000;
+const SERVER_LABEL_WAIT_MS = 120_000;
+const SERVER_LABEL_POLL_MS = 5_000;
+function labelsOf(node: {
+  metadata?: { labels?: Record<string, string> };
+}): Record<string, string> {
+  return node?.metadata?.labels ?? {};
+}
+
+/** Shared storage for a new worker; one bought to join later learns the master's address with the join details. */
+function workerSharedStorageOf(
+  cluster: ClusterEntity,
+  joinLater: boolean,
+): { enabled: boolean; masterPrivateIp?: string } | undefined {
+  if (cluster.sharedStorageEnabled === false) return undefined;
+  if (!cluster.masterPrivateIp && !joinLater) return undefined;
+  return {
+    enabled: true,
+    masterPrivateIp: cluster.masterPrivateIp ?? undefined,
+  };
+}
+
+function workerNodeMetadata(
+  index: number,
+  haRole: HaNodeRole | null,
+  joinLater: boolean,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    workerIndex: index,
+    ...haRoleMetadata(haRole),
+  };
+  if (joinLater) metadata.joinLater = true;
+  return metadata;
+}
 
 interface WorkerNodeOptions {
   providerFirewallIds?: string[];
@@ -67,6 +109,8 @@ interface WorkerNodeOptions {
   region?: string | null;
   haRole?: HaNodeRole | null;
   captureInstallLog?: boolean;
+  /** Bought with the cluster: prepares itself and waits to be told where to join. */
+  joinLater?: boolean;
 }
 
 @Injectable()
@@ -627,7 +671,45 @@ export class ClusterOrchestrationService {
     return workers;
   }
 
-  private async nextWorkerIndex(cluster: ClusterEntity): Promise<number> {
+  /** Mints the cluster's bootstrap key once, before several nodes are bought at the same time. */
+  async prepareBootstrapKey(cluster: ClusterEntity): Promise<void> {
+    await this.ensureBootstrapKey(cluster, 'master');
+  }
+
+  /** Buys one server of a cluster across three locations that waits to be told where to join. */
+  async buyWorkerToJoinLater(
+    cluster: ClusterEntity,
+    index: number,
+    server: PlannedServer,
+    operationId: string,
+    providerFirewallIds: string[],
+  ): Promise<ClusterNodeEntity> {
+    return this.createWorkerNode(cluster, index, '', '', operationId, {
+      providerFirewallIds,
+      serverType: server.shape,
+      region: server.zone,
+      haRole: 'server',
+      joinLater: true,
+    });
+  }
+
+  /** Waits for a server told where to join to be in the control plane. */
+  async awaitServerJoin(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+    operationId: string,
+  ): Promise<ClusterNodeEntity> {
+    return this.awaitJoin(cluster, node, 'server', operationId, {
+      timeoutMs: SERVER_JOIN_TIMEOUT_MS,
+    });
+  }
+
+  /** The key every node of the cluster is first reached with over SSH. */
+  async bootstrapPrivateKey(cluster: ClusterEntity): Promise<string> {
+    return (await this.ensureBootstrapKey(cluster, 'worker')).privateKey;
+  }
+
+  async nextWorkerIndex(cluster: ClusterEntity): Promise<number> {
     const rows = await this.nodeRepository.find({
       where: { clusterId: cluster.id },
       select: ['serverName'],
@@ -656,6 +738,7 @@ export class ClusterOrchestrationService {
       region,
       haRole = null,
       captureInstallLog = false,
+      joinLater = false,
     }: WorkerNodeOptions = {},
   ): Promise<ClusterNodeEntity> {
     const serverName = `${cluster.name}-worker-${index}`;
@@ -680,24 +763,20 @@ export class ClusterOrchestrationService {
       cluster,
       serverName,
       NodeType.WORKER,
-      { workerIndex: index, ...haRoleMetadata(haRole) },
+      workerNodeMetadata(index, haRole, joinLater),
       shape,
       location,
     );
     const k3sRole = k3sRoleOf(haRole);
+    // A retried creation finds the machine it already bought waiting.
+    if (joinLater && node.providerResourceId) return node;
 
     const controlClusterIp = await this.resolveWorkerObservabilityIp(cluster);
 
     // Resolve Flui shared storage config for the worker (NFS+fscache, §14).
     // Workers mount the master's NFS export and run cachefilesd. We need
     // master's private IP for the mount.
-    const workerSharedStorage =
-      cluster.sharedStorageEnabled !== false && cluster.masterPrivateIp
-        ? {
-            enabled: true,
-            masterPrivateIp: cluster.masterPrivateIp,
-          }
-        : undefined;
+    const workerSharedStorage = workerSharedStorageOf(cluster, joinLater);
 
     const overlay = await this.overlayPlanFor(cluster, node.id);
     const overlayConfig = {
@@ -723,6 +802,7 @@ export class ClusterOrchestrationService {
       k3sToken,
       masterIp,
       k3sRole,
+      joinLater,
       k3sVersion: cluster.k3sVersion,
       instanceId: serverName,
       instanceName: serverName,
@@ -773,6 +853,7 @@ export class ClusterOrchestrationService {
           k3sToken,
           masterIp,
           k3sRole,
+          joinLater,
           k3sVersion: cluster.k3sVersion,
           instanceId: serverName,
           instanceName: serverName,
@@ -928,37 +1009,56 @@ export class ClusterOrchestrationService {
       nodeType: node.nodeType,
     });
 
+    if (joinLater) {
+      this.logger.log(
+        `Server ${serverName} bought (privateIp=${node.privateIp ?? 'none'}); it waits to be told where to join`,
+      );
+      return node;
+    }
     this.logger.log(
       `Worker node ${serverName} provisioned (privateIp=${node.privateIp ?? 'none'}). Waiting for K3s join...`,
     );
 
-    await this.updateOperationProgress(
-      operationId,
-      60,
-      `Server ${serverName} is up; waiting for it to join the cluster...`,
-    );
-    const logHost = installLogTarget({
+    return this.awaitJoin(cluster, node, k3sRole, operationId, {
+      tailWith: captureInstallLog ? bootstrapKey.privateKey : undefined,
+    });
+  }
+
+  /** Where Flui reaches a node over SSH from where this API runs. */
+  nodeSshHost(cluster: ClusterEntity, node: ClusterNodeEntity): string | null {
+    return installLogTarget({
       publicIp: node.ipAddress,
       privateIp: node.privateIp,
       controlCluster: isControlClusterType(cluster.clusterType),
       apiInCluster: apiRunsInCluster(),
     });
+  }
+
+  private async awaitJoin(
+    cluster: ClusterEntity,
+    node: ClusterNodeEntity,
+    k3sRole: 'server' | 'agent',
+    operationId: string,
+    { tailWith, timeoutMs }: { tailWith?: string; timeoutMs?: number } = {},
+  ): Promise<ClusterNodeEntity> {
+    const serverName = node.serverName;
+    await this.updateOperationProgress(
+      operationId,
+      60,
+      `Server ${serverName} is up; waiting for it to join the cluster...`,
+    );
+    const logHost = this.nodeSshHost(cluster, node);
     const tail =
-      captureInstallLog && logHost
-        ? () =>
-            this.tailInstallLog(
-              operationId,
-              cluster.id,
-              logHost,
-              bootstrapKey.privateKey,
-            )
+      tailWith && logHost
+        ? () => this.tailInstallLog(operationId, cluster.id, logHost, tailWith)
         : undefined;
 
+    let joinedLabels: Record<string, string> | undefined;
     try {
-      await this.waitForNodeReady(
+      joinedLabels = await this.waitForNodeReady(
         cluster,
         serverName,
-        undefined,
+        timeoutMs,
         undefined,
         tail,
       );
@@ -981,10 +1081,54 @@ export class ClusterOrchestrationService {
     }
 
     await tail?.();
+    await this.refuseUnlessServer(
+      node,
+      k3sRole,
+      await this.labelsOnceServer(cluster, serverName, k3sRole, joinedLabels),
+    );
     node.status = NodeStatus.READY;
     await this.nodeRepository.save(node);
     this.logger.log(`Worker node ${serverName} joined cluster and is Ready`);
     return node;
+  }
+
+  /**
+   * K3s labels a server as part of the control plane shortly after the node
+   * turns Ready, so a server read at that instant can look like an agent.
+   */
+  private async labelsOnceServer(
+    cluster: ClusterEntity,
+    nodeName: string,
+    k3sRole: 'server' | 'agent',
+    labels: Record<string, string> | undefined,
+  ): Promise<Record<string, string> | undefined> {
+    let current = labels;
+    const deadline = Date.now() + SERVER_LABEL_WAIT_MS;
+    while (
+      serverJoinRefusal(nodeName, k3sRole, current) &&
+      Date.now() < deadline
+    ) {
+      await this.sleep(SERVER_LABEL_POLL_MS);
+      current = await this.waitForNodeReady(cluster, nodeName);
+    }
+    return current;
+  }
+
+  private async refuseUnlessServer(
+    node: ClusterNodeEntity,
+    k3sRole: 'server' | 'agent',
+    labels: Record<string, string> | undefined,
+  ): Promise<void> {
+    const refusal = serverJoinRefusal(node.serverName, k3sRole, labels);
+    if (!refusal) return;
+    const { haRole: _dropped, ...rest } = node.metadata ?? {};
+    node.status = NodeStatus.ERROR;
+    node.metadata = {
+      ...rest,
+      joinError: { message: refusal, timestamp: new Date().toISOString() },
+    };
+    await this.nodeRepository.save(node);
+    throw new Error(refusal);
   }
 
   /**
@@ -998,7 +1142,7 @@ export class ClusterOrchestrationService {
     timeoutMs = 240000,
     intervalMs = 10000,
     onTick?: () => Promise<void>,
-  ): Promise<void> {
+  ): Promise<Record<string, string>> {
     if (!cluster.kubeconfigEncrypted) {
       throw new Error(
         `Cluster ${cluster.name} has no kubeconfig — cannot verify node ${nodeName} join`,
@@ -1022,7 +1166,7 @@ export class ClusterOrchestrationService {
           this.logger.log(
             `Node ${nodeName} joined cluster and is Ready (took ~${Math.round((Date.now() - (deadline - timeoutMs)) / 1000)}s)`,
           );
-          return;
+          return labelsOf(node);
         }
         lastErr = ready
           ? `Ready=${ready.status} (${ready.reason ?? 'no reason'}: ${ready.message ?? ''})`

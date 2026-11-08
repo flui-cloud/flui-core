@@ -76,6 +76,20 @@ import { removalPreflight } from './removal-preflight';
 import { MasterEvacuationService } from '../services/master-evacuation.service';
 import { movesSentence } from '../../scaling/engine/drain.core';
 import { retryHeldDelivery } from '../../../common/leadership/held-delivery';
+import { HaCreationPlan } from '../utils/ha-creation-plan.core';
+
+import {
+  HaJoined,
+  HaPurchase,
+  HaServerJoinService,
+} from '../services/ha-server-join.service';
+
+function isSingleNodeCreation(
+  workerCount: number,
+  haPlan: HaCreationPlan | undefined,
+): boolean {
+  return workerCount === 0 && !haPlan;
+}
 
 /** cert-manager's webhooks register after the cluster reports ready. */
 const ZONE_RECONCILE_ATTEMPTS = 5;
@@ -96,6 +110,7 @@ export class ClusterQueueProcessor {
     private readonly operationRepository: Repository<InfrastructureOperationEntity>,
     @InjectQueue('infrastructure') private readonly infrastructureQueue: Queue,
     private readonly orchestrationService: ClusterOrchestrationService,
+    private readonly haServerJoin: HaServerJoinService,
     private readonly serversService: ServersService,
     private readonly clusterDeletionService: ClusterDeletionService,
     private readonly clusterPowerManagementService: ClusterPowerManagementService,
@@ -293,7 +308,9 @@ export class ClusterQueueProcessor {
       const workerCount =
         (operation.metadata as CreateClusterOperationMetadata)?.clusterConfig
           ?.workerCount || 0;
-      const isSingleNode = workerCount === 0;
+      const haPlan = (operation.metadata as CreateClusterOperationMetadata)
+        ?.haPlan;
+      const isSingleNode = isSingleNodeCreation(workerCount, haPlan);
 
       // Updated: Use providerFirewallId (string) instead of providerFirewallIds (array)
       const providerFirewallId = (
@@ -320,11 +337,9 @@ export class ClusterQueueProcessor {
         throw new Error(`Cluster ${clusterId} not found`);
       }
 
-      // Reset status to CREATING in case this is a Bull retry after a previous failed attempt
-      if (cluster.status === ClusterStatus.ERROR) {
-        cluster.status = ClusterStatus.CREATING;
-        await this.clusterRepository.save(cluster);
-      }
+      // A retry of a creation whose cluster was destroyed meanwhile would buy
+      // its servers again for a cluster nobody has.
+      if (await this.resumeOrStop(cluster, operationId)) return;
 
       const totalSteps = isSingleNode ? 4 : 5;
       const startedAt = Date.now();
@@ -363,11 +378,18 @@ export class ClusterQueueProcessor {
         timestamp: new Date(),
       } as InfrastructureOperationProgressDto);
 
+      const bought = await this.haServerJoin.startBuying(
+        cluster,
+        haPlan,
+        operationId,
+        providerFirewallIds,
+      );
       const masterNode = await this.orchestrationService.createMasterNode(
         cluster,
         operationId,
         providerFirewallIds,
       );
+      const k3sReadyAt = new Date().toISOString();
 
       await this.updateOperationStep(operationId, 1, 100, {
         message: 'Master node created and K3s ready',
@@ -519,16 +541,14 @@ export class ClusterQueueProcessor {
           timestamp: new Date(),
         } as InfrastructureOperationProgressDto);
 
-        await this.orchestrationService.createWorkerNodes(
+        const initial = await this.createInitialNodes(
           cluster,
           workerCount,
           operationId,
           providerFirewallIds,
+          { plan: haPlan, bought, k3sReadyAt },
         );
-
-        await this.updateOperationStep(operationId, 3, 100, {
-          message: `All ${workerCount} worker nodes created`,
-        });
+        await this.updateOperationStep(operationId, 3, 100, initial.stepResult);
         this.infraGateway.emitProgress(operationId, clusterId, {
           operationId,
           resourceId: clusterId,
@@ -541,9 +561,15 @@ export class ClusterQueueProcessor {
           timestamp: new Date(),
         } as InfrastructureOperationProgressDto);
 
-        cluster.nodeCount = 1 + workerCount;
+        cluster.nodeCount = initial.nodeCount;
         await this.clusterRepository.save(cluster);
         await this.clusterFirewallIntegrationService.syncHostLayer(clusterId);
+        const completion = await this.completionOf(
+          cluster,
+          operationId,
+          initial.ha,
+          k3sReadyAt,
+        );
 
         // === MULTI-NODE: STEP 4 = FINALIZE ===
         await this.updateOperationStep(operationId, 4, 50, {
@@ -571,7 +597,7 @@ export class ClusterQueueProcessor {
 
         await this.updateOperationStep(operationId, 4, 100, {
           status: OperationStatus.COMPLETED,
-          message: 'Multi-node cluster ready',
+          ...completion,
           clusterName: cluster.name,
           masterIp: cluster.masterIpAddress,
           nodeCount: cluster.nodeCount,
@@ -2686,6 +2712,101 @@ export class ClusterQueueProcessor {
         `[master-protection] ${cluster.name}: could not move work off the master: ${(err as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Whether a run of the creation must stop before doing anything; a Bull
+   * retry after a failed attempt starts over from CREATING.
+   */
+  private async resumeOrStop(
+    cluster: ClusterEntity,
+    operationId: string,
+  ): Promise<boolean> {
+    if (cluster.status !== ClusterStatus.DELETED && !cluster.deletedAt) {
+      if (cluster.status === ClusterStatus.ERROR) {
+        cluster.status = ClusterStatus.CREATING;
+        await this.clusterRepository.save(cluster);
+      }
+      return false;
+    }
+    this.logger.warn(
+      `Cluster ${cluster.name} was destroyed; its creation is not run again`,
+    );
+    await this.updateOperationStep(operationId, 0, 100, {
+      status: OperationStatus.CANCELLED,
+      message: 'The cluster was destroyed before its creation finished',
+    });
+    return true;
+  }
+
+  /** The workers a standard cluster asked for, or the servers bought to join later. */
+  private async createInitialNodes(
+    cluster: ClusterEntity,
+    workerCount: number,
+    operationId: string,
+    providerFirewallIds: string[],
+    ha: {
+      plan: HaCreationPlan | undefined;
+      bought: { purchases: Promise<HaPurchase[]> } | null;
+      k3sReadyAt: string;
+    },
+  ): Promise<{
+    nodeCount: number;
+    stepResult: Record<string, unknown>;
+    ha: HaJoined | null;
+  }> {
+    if (!ha.plan || !ha.bought) {
+      await this.orchestrationService.createWorkerNodes(
+        cluster,
+        workerCount,
+        operationId,
+        providerFirewallIds,
+      );
+      return {
+        nodeCount: 1 + workerCount,
+        stepResult: { message: `All ${workerCount} worker nodes created` },
+        ha: null,
+      };
+    }
+    const joined = await this.haServerJoin.joinBought(
+      cluster,
+      ha.plan,
+      ha.bought,
+      operationId,
+      (step, progress, data) =>
+        this.updateOperationStep(operationId, step, progress, data),
+    );
+    return {
+      nodeCount: 1 + joined.joined,
+      stepResult: {
+        message: joined.joinedMessage,
+        k3sReadyAt: ha.k3sReadyAt,
+        serversJoinedAt: joined.joinedAt,
+      },
+      ha: joined,
+    };
+  }
+
+  /** How the creation ends: a cluster across three locations waits for the install and says what it reached. */
+  private async completionOf(
+    cluster: ClusterEntity,
+    operationId: string,
+    ha: HaJoined | null,
+    k3sReadyAt: string,
+  ): Promise<Record<string, unknown>> {
+    if (!ha) return { message: 'Multi-node cluster ready' };
+    const platform = await this.haServerJoin.waitForPlatform(
+      cluster,
+      (step, progress, data) =>
+        this.updateOperationStep(operationId, step, progress, data),
+    );
+    return {
+      message: [ha.readyMessage, platform.problem].filter(Boolean).join('. '),
+      k3sReadyAt,
+      serversJoinedAt: ha.joinedAt,
+      platformInstalledAt: platform.at,
+      missingLocations: ha.missing,
+    };
   }
 
   /** Taints the master when a control cluster crosses single-node → multi-node. */

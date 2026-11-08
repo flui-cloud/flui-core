@@ -1491,9 +1491,11 @@ const MASK_EXEMPT: string[] = [
   'CreateClusterDatasourcesDto.clusterName', // modules/grafana/dto/grafana-datasource.dto.ts
   'CreateClusterDatasourcesDto.masterIpAddress', // modules/grafana/dto/grafana-datasource.dto.ts
   'CreateClusterDto.autoscalingEnabled', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
+  'CreateClusterDto.completeLater', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.diskSizeGb', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.endpointHostnameMode', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.firewallRules', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
+  'CreateClusterDto.highAvailability', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.image', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.k3sVersion', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.maxNodes', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
@@ -1504,6 +1506,7 @@ const MASK_EXEMPT: string[] = [
   'CreateClusterDto.nodeSize', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.provider', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.region', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
+  'CreateClusterDto.shapes', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sharedStorageEnabled', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sharedStorageVolumeSizeGb', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
   'CreateClusterDto.sshKeys', // modules/infrastructure/clusters/dto/create-cluster.dto.ts
@@ -2018,6 +2021,7 @@ const MASK_EXEMPT: string[] = [
   'GrafanaDatasourceResponseDto.type', // modules/grafana/dto/grafana-datasource.dto.ts
   'GrafanaDatasourceResponseDto.uid', // modules/grafana/dto/grafana-datasource.dto.ts
   'GrafanaDatasourceResponseDto.url', // modules/grafana/dto/grafana-datasource.dto.ts
+  'HaPlanResponseDto.servers', // modules/infrastructure/clusters/dto/ha-creation-plan.dto.ts
   'HealthCheckConfigDto.enabled', // modules/repositories/dto/analyze-repository.dto.ts
   'HealthCheckConfigDto.failureThreshold', // modules/repositories/dto/analyze-repository.dto.ts
   'HealthCheckConfigDto.initialDelaySeconds', // modules/repositories/dto/analyze-repository.dto.ts

@@ -43,6 +43,8 @@ import { ClustersController } from './clusters.controller';
 import { ClustersService } from './clusters.service';
 import { ClusterValidationService } from './services/cluster-validation.service';
 import { ClusterCreationService } from './services/cluster-creation.service';
+import { HaCreationPlanService } from './services/ha-creation-plan.service';
+import { HaServerJoinService } from './services/ha-server-join.service';
 import { ClusterDeletionService } from './services/cluster-deletion.service';
 import { ClusterMapperService } from './services/cluster-mapper.service';
 import { ClusterOperationsService } from './services/cluster-operations.service';
@@ -209,6 +211,8 @@ import { ReplicatedVolumesModule } from '../../replicated-volumes/replicated-vol
     // Modular services
     ClusterValidationService,
     ClusterCreationService,
+    HaCreationPlanService,
+    HaServerJoinService,
     ClusterDeletionService,
     ClusterOperationsService,
     ClusterMapperService,

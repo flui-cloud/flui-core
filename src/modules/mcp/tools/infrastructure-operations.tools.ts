@@ -386,6 +386,24 @@ export const INFRASTRUCTURE_OPERATION_TOOLS: ToolDef[] = [
         .describe(
           'Deprecated and ignored: use scaling_group_set to make a cluster grow on its own.',
         ),
+      highAvailability: z
+        .enum(['standard', 'three-locations'])
+        .optional()
+        .describe(
+          "`three-locations`: one server in each of the three locations the provider validated for this region (cluster_ha_get shows the layout once it exists), bought together and joined one at a time; `region` is the first server's location and must be one for data, and `workerCount` must be 0. It costs three machines: say so to the person. Refused with the reason where the provider declares no such layout.",
+        ),
+      shapes: z
+        .array(z.string())
+        .optional()
+        .describe(
+          'With `three-locations`: sizes each location may take, in order of preference, one architecture. Each location gets the first it has available. Omitted: `nodeSize`.',
+        ),
+      completeLater: z
+        .boolean()
+        .optional()
+        .describe(
+          'With `three-locations`: when a location has none of the sizes, create the cluster in the others and leave that server to add later. Off (default), nothing is bought and the refusal names sizes every location has: relay it.',
+        ),
     },
     run: async (args, ctx) => {
       const operation = await ctx.api.post<QueuedOperation>(

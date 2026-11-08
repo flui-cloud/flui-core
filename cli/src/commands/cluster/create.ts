@@ -8,6 +8,57 @@ import { getRecommendedServerType } from '../../config/defaults';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_WAIT_MS = 1_800_000; // 30 min — matches the server-side estimate for master + N workers
+// Across three locations the API also waits for the install to end, up to an hour.
+const MAX_WAIT_HA_MS = 3_600_000;
+
+/** The sizes asked for, in order; the node size alone when none were. */
+function sizesOf(raw: string | undefined, nodeSize: string): string[] {
+  const sizes = (raw ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return sizes.length ? sizes : [nodeSize];
+}
+
+function nodeLines(plan: HaPlan | null, workerCount: number): string[] {
+  if (!plan) return [`  ${chalk.bold('Worker nodes:')} ${workerCount}`];
+  return [
+    `  ${chalk.bold('Availability:')} three locations (${plan.region})`,
+    ...plan.servers.map((s) => {
+      const role = s.role === 'data' ? 'copies of data' : 'votes';
+      const first = s.first ? ', starts the cluster' : '';
+      return `                ${s.zone.padEnd(6)} ${s.shape.padEnd(8)} ${role}${first}`;
+    }),
+    ...plan.later.map(
+      (zone) =>
+        `                ${zone.padEnd(6)} ${chalk.yellow('none available now: add it later')}`,
+    ),
+  ];
+}
+
+function haRequest(
+  ha: boolean,
+  sizes: string[],
+  completeLater: boolean,
+): Record<string, unknown> {
+  if (!ha) return {};
+  return {
+    highAvailability: 'three-locations',
+    shapes: sizes,
+    ...(completeLater ? { completeLater: true } : {}),
+  };
+}
+
+interface HaPlan {
+  region: string;
+  servers: Array<{
+    zone: string;
+    shape: string;
+    role: 'data' | 'vote';
+    first: boolean;
+  }>;
+  later: string[];
+}
 
 export default class ClusterCreate extends Command {
   static readonly description =
@@ -23,6 +74,7 @@ export default class ClusterCreate extends Command {
     '<%= config.bin %> <%= command.id %> edge --provider hetzner --region hel1',
     '<%= config.bin %> <%= command.id %> edge --provider byos --flui-network',
     '<%= config.bin %> <%= command.id %> edge --vnet 3f2a… --subnet 9c1b…',
+    '<%= config.bin %> <%= command.id %> ha-hz --ha --region fsn1 --sizes cpx22,cx23',
   ];
 
   static readonly args = {
@@ -76,7 +128,101 @@ export default class ClusterCreate extends Command {
       description: 'Return immediately after queuing creation',
       default: false,
     }),
+    ha: Flags.boolean({
+      description:
+        'Highly available across three locations: one server in each location ' +
+        'the provider validated for this region, bought together and joined one ' +
+        "at a time. --region is the first server's location, one for data.",
+      default: false,
+    }),
+    sizes: Flags.string({
+      description:
+        'With --ha: the sizes each location may take, comma separated, in order ' +
+        'of preference. Each location gets the first one it has available. ' +
+        'Defaults to --node-size.',
+      dependsOn: ['ha'],
+    }),
+    'complete-later': Flags.boolean({
+      description:
+        'With --ha: when a location has none of the sizes available, create the ' +
+        'cluster in the others and add that server later. Off, nothing is bought.',
+      default: false,
+      dependsOn: ['ha'],
+    }),
   };
+
+  private refuseWorkersWithHa(ha: boolean, workerCount: number): void {
+    if (!ha || workerCount === 0) return;
+    this.error(
+      'A cluster across three locations starts with its three servers; add workers once it is ready.',
+      { exit: 1 },
+    );
+  }
+
+  private async ensureNameFree(
+    apiClient: ApiClient,
+    name: string,
+    provider: string,
+  ): Promise<void> {
+    const spinner = ora(`Checking "${name}" is free on ${provider}...`).start();
+    let taken: string | null = null;
+    try {
+      const availability = await apiClient.get<{
+        available: boolean;
+        reason?: string;
+      }>(
+        `/infrastructure/clusters/name-availability?name=${encodeURIComponent(name)}&provider=${encodeURIComponent(provider)}`,
+      );
+      if (availability.available) spinner.succeed('Name available');
+      else taken = availability.reason ?? 'Name not available';
+    } catch (error: any) {
+      // Best-effort — the create call re-validates server-side regardless.
+      spinner.warn(
+        `Could not pre-check name availability: ${error.message} — continuing`,
+      );
+    }
+    if (taken) {
+      // Outside the try: oclif's exit is an exception the catch would swallow.
+      spinner.fail(taken);
+      this.exit(1);
+    }
+  }
+
+  private async haPlan(
+    apiClient: ApiClient,
+    ha: boolean,
+    query: {
+      provider: string;
+      region: string;
+      shapes: string[];
+      completeLater: boolean;
+    },
+  ): Promise<HaPlan | null> {
+    if (!ha) return null;
+    const params = new URLSearchParams({
+      provider: query.provider,
+      region: query.region,
+      shapes: query.shapes.join(','),
+      completeLater: String(query.completeLater),
+    });
+    const plan = await apiClient.get<
+      HaPlan & {
+        layoutAvailable: boolean;
+        possible: boolean;
+        refusal: string | null;
+      }
+    >(`/infrastructure/clusters/high-availability/plan?${params}`);
+    if (!plan.possible) {
+      this.error(
+        plan.refusal ??
+          'This cluster cannot be created across three locations.',
+        {
+          exit: 1,
+        },
+      );
+    }
+    return plan;
+  }
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(ClusterCreate);
@@ -154,28 +300,17 @@ export default class ClusterCreate extends Command {
     if (flags.subnet && !flags.vnet) {
       this.error('--subnet needs the --vnet it belongs to.', { exit: 1 });
     }
+    this.refuseWorkersWithHa(flags.ha, flags['worker-count']);
+    const sizes = sizesOf(flags.sizes, nodeSize);
 
-    const spinner = ora(
-      `Checking "${args.name}" is free on ${provider}...`,
-    ).start();
-    try {
-      const availability = await apiClient.get<{
-        available: boolean;
-        reason?: string;
-      }>(
-        `/infrastructure/clusters/name-availability?name=${encodeURIComponent(args.name)}&provider=${encodeURIComponent(provider)}`,
-      );
-      if (!availability.available) {
-        spinner.fail(availability.reason ?? 'Name not available');
-        this.exit(1);
-      }
-      spinner.succeed('Name available');
-    } catch (error: any) {
-      // Best-effort — the create call re-validates server-side regardless.
-      spinner.warn(
-        `Could not pre-check name availability: ${error.message} — continuing`,
-      );
-    }
+    await this.ensureNameFree(apiClient, args.name, provider);
+
+    const haPlan = await this.haPlan(apiClient, flags.ha, {
+      provider,
+      region,
+      shapes: sizes,
+      completeLater: flags['complete-later'],
+    });
 
     console.log('');
     console.log(`  ${chalk.bold('Name:')}         ${args.name}`);
@@ -183,8 +318,10 @@ export default class ClusterCreate extends Command {
     console.log(
       `  ${chalk.bold('Region:')}       ${region || '(provider default)'}`,
     );
-    console.log(`  ${chalk.bold('Node size:')}    ${nodeSize}`);
-    console.log(`  ${chalk.bold('Worker nodes:')} ${flags['worker-count']}`);
+    console.log(`  ${chalk.bold('Node size:')}    ${sizes.join(', ')}`);
+    for (const line of nodeLines(haPlan, flags['worker-count'])) {
+      console.log(line);
+    }
     if (fluiNetwork) {
       console.log(
         `  ${chalk.bold('Network:')}      built by Flui ` +
@@ -209,8 +346,9 @@ export default class ClusterCreate extends Command {
         name: args.name,
         provider,
         region,
-        nodeSize,
+        nodeSize: sizes[0],
         workerCount: flags['worker-count'],
+        ...haRequest(flags.ha, sizes, flags['complete-later']),
         ...(fluiNetwork
           ? {
               fluiManagedNetwork: flags['network-cidr']
@@ -253,23 +391,29 @@ export default class ClusterCreate extends Command {
       return;
     }
 
-    await this.waitForCreation(apiClient, operationId, args.name);
+    await this.waitForCreation(
+      apiClient,
+      operationId,
+      args.name,
+      flags.ha ? MAX_WAIT_HA_MS : MAX_WAIT_MS,
+    );
   }
 
   private async waitForCreation(
     apiClient: ApiClient,
     operationId: string,
     clusterName: string,
+    maxWaitMs: number,
   ): Promise<void> {
     console.log(
       chalk.dim(
-        `  Waiting for creation to complete (up to ${MAX_WAIT_MS / 60000} min)…`,
+        `  Waiting for creation to complete (up to ${maxWaitMs / 60000} min)…`,
       ),
     );
     const waitSpinner = ora('Creating cluster…').start();
     const started = Date.now();
 
-    while (Date.now() - started < MAX_WAIT_MS) {
+    while (Date.now() - started < maxWaitMs) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       const result = await this.pollOperation(
         apiClient,
