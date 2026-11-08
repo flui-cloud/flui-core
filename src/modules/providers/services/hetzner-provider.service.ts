@@ -1275,6 +1275,18 @@ export class HetznerProviderService implements ICloudProvider {
     }
   }
 
+  /**
+   * Asked of Hetzner by name, not through `listSSHKeys`: that one keeps only
+   * keys carrying Flui's labels, and a key registered here carries none, so a
+   * second server bought at the same moment never found the first one's key.
+   */
+  private async findSshKeyIdByName(name: string): Promise<string | null> {
+    const sshKeysApi = await this.createSSHKeysApi();
+    const response = await sshKeysApi.listSshKeys(undefined, name);
+    const found = response.data.ssh_keys.find((k) => k.name === name);
+    return found ? found.id.toString() : null;
+  }
+
   async resolveSSHKeys(keys: SshKeyInfo[]): Promise<string[]> {
     const providerIds: string[] = [];
 
@@ -1290,13 +1302,9 @@ export class HetznerProviderService implements ICloudProvider {
         providerIds.push(result.id);
       } catch (error) {
         if (error.message?.includes('already exists')) {
-          // Key exists — find it by fingerprint or name
-          const existing = await this.listSSHKeys();
-          const match = existing.find(
-            (k) => k.fingerprint === key.fingerprint || k.name === key.name,
-          );
+          const match = await this.findSshKeyIdByName(key.name);
           if (match) {
-            providerIds.push(match.id);
+            providerIds.push(match);
             continue;
           }
         }
