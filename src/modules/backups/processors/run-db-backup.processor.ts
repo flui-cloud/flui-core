@@ -1,5 +1,5 @@
 import { Processor, Process } from '@nestjs/bull';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -31,6 +31,7 @@ import { ArtifactLocationState } from '../enums/artifact-location-state.enum';
 import { BackupArtifactLocationEntity } from '../entities/backup-artifact-location.entity';
 import { BACKUP_QUEUE, BACKUP_JOB_TYPES } from '../backups.constants';
 import { EncryptionMode } from '../enums/destination-health.enum';
+import { DatabaseHaBackupHandoverService } from '../services/database-ha-backup-handover.service';
 
 @Processor(BACKUP_QUEUE)
 export class RunDbBackupProcessor {
@@ -44,6 +45,7 @@ export class RunDbBackupProcessor {
     private readonly destRepo: BackupDestinationRepository,
     private readonly artifactRepo: BackupArtifactRepository,
     private readonly engines: ContinuousBackupEngineRegistry,
+    @Optional() private readonly handover?: DatabaseHaBackupHandoverService,
   ) {}
 
   @Process(BACKUP_JOB_TYPES.RUN_DB_BACKUP)
@@ -89,6 +91,11 @@ export class RunDbBackupProcessor {
       // the workload: this job can run when that workload is mid-redeploy, and
       // driving one database's tool against another's is the failure the
       // registry exists to make impossible.
+      // A database made highly available whose backup did not follow it yet
+      // ships from its cluster from this run on.
+      if (await this.handover?.handOver(appId, { takeBase: false })) {
+        Object.assign(policy, await this.policiesService.findById(policy.id));
+      }
       const engine = this.engines.forEngine(policy.engine);
 
       // Idempotent + self-healing: (re)write conf, ensure the stanza exists, flip

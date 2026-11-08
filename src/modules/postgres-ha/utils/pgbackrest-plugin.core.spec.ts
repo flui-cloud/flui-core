@@ -5,6 +5,7 @@ import {
   archiveThroughPluginPatch,
   pinnedPgbackrestPluginManifest,
   pluginBackupState,
+  promotedReplicaPatch,
   renderPgbackrestStanza,
   renderPluginBackup,
   stopArchivingPatch,
@@ -111,6 +112,17 @@ describe('the repository of a highly available database', () => {
     ).toEqual({
       plugins: null,
     });
+  });
+
+  it('drops the replica section a promoted copy keeps, which the plugin cannot read', () => {
+    expect(
+      (
+        promotedReplicaPatch({
+          cluster: 'orders-db-ha',
+          namespace: 'ns',
+        }) as any
+      ).spec,
+    ).toEqual({ replica: null });
   });
 
   it('takes a base on the primary and reads its label back', () => {

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { BackupPolicyRepository } from '../repositories/backup-policy.repository';
 import { BackupDestinationRepository } from '../repositories/backup-destination.repository';
 import { BackupPoliciesService } from './backup-policies.service';
@@ -28,13 +28,24 @@ export class DatabaseHaBackupHandoverService {
   ) {}
 
   /** What happened to the backup, in words for the operation; null when the database had none. */
-  async handOver(appId: string, userId?: string): Promise<string | null> {
+  async handOver(
+    appId: string,
+    { userId, takeBase = true }: { userId?: string; takeBase?: boolean } = {},
+  ): Promise<string | null> {
     const policy = await this.policyRepo.findDbPolicyForApp(appId);
     if (!policy) return null;
     if (policy.engine === this.ha.engine) return null;
     if ((policy.engine ?? SINGLE_INSTANCE_ENGINE) !== SINGLE_INSTANCE_ENGINE) {
       return null;
     }
+    const highlyAvailable = await this.ha.requireTooling(appId).then(
+      () => true,
+      (err) => {
+        if (err instanceof BadRequestException) return false;
+        throw err;
+      },
+    );
+    if (!highlyAvailable) return null;
     const primary = this.policies.primaryDestinationOf(policy);
     const destination = await this.destRepo.findById(primary.destinationId);
     if (!destination) throw new Error('primary destination not found');
@@ -47,13 +58,15 @@ export class DatabaseHaBackupHandoverService {
       engine: this.ha.engine,
       metadata: { ...policy.metadata, generation },
     });
+    this.logger.log(
+      `[backup] ${appId}: continuous backup moved to the highly available cluster (${generation})`,
+    );
+    if (!takeBase)
+      return 'Continuous backup now ships from the highly available cluster.';
     await this.jobs.createOnDemand(
       userId ?? policy.userId,
       { policyId: policy.id, metadata: { reason: 'database-ha-handover' } },
       BackupJobTriggerType.SCHEDULED,
-    );
-    this.logger.log(
-      `[backup] ${appId}: continuous backup moved to the highly available cluster (${generation})`,
     );
     return 'Continuous backup now ships from the highly available cluster; its first full backup is running.';
   }

@@ -115,6 +115,13 @@ if [ "${FLUI_PG_RESTORE:-}" = "1" ] && [ "${FLUI_PG_STANDBY:-}" != "1" ] && [ ! 
     done
     cp /usr/share/postgresql/postgresql.conf.sample "$PGDATA/postgresql.conf"
     printf "\n# Flui managed\ninclude_if_exists = '/etc/flui/postgresql.flui.conf'\n" >> "$PGDATA/postgresql.conf"
+    # Recovery refuses to replay the log of a primary that ran with more of
+    # these than this instance: the cluster's own values come along.
+    for key in max_connections max_worker_processes max_wal_senders max_prepared_transactions max_locks_per_transaction; do
+      line=$(cat "$PVC_ROOT/cnpg-configuration/postgresql.conf" "$PVC_ROOT/cnpg-configuration/custom.conf" "$PVC_ROOT/cnpg-configuration/override.conf" 2>/dev/null \
+        | grep -E "^[[:space:]]*${key}[[:space:]]*=" | tail -1 || true)
+      if [ -n "$line" ]; then printf '%s\n' "$line" >> "$PGDATA/postgresql.conf"; fi
+    done
     printf 'local all all trust\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\nhost all all all scram-sha-256\n' > "$PGDATA/pg_hba.conf"
     : > "$PGDATA/pg_ident.conf"
     chown postgres:postgres "$PGDATA/postgresql.conf" "$PGDATA/pg_hba.conf" "$PGDATA/pg_ident.conf"
