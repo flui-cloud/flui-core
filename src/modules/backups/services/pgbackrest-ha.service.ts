@@ -23,12 +23,11 @@ import {
 } from './continuous-backup-engine.interface';
 import {
   PGBACKREST_STANZA,
-  parsePgbackrestInfo,
   PgBackupInfo,
   s3EndpointHost,
   withArchivedEdge,
 } from './pgbackrest-config.util';
-import { parseRepoCipher, repoPathIn } from './pgbackrest-repo.util';
+import { repoPathIn } from './pgbackrest-repo.util';
 import { parseRestorePoint } from '../utils/restore-point.util';
 import {
   databaseHaServes,
@@ -42,12 +41,18 @@ import {
   PGBACKREST_SIDECAR,
   pgbackrestStanzaName,
   pluginBackupState,
+  promotedReplicaPatch,
   renderPgbackrestSecret,
   renderPgbackrestStanza,
   renderPluginBackup,
   stopArchivingPatch,
 } from '../../postgres-ha/utils/pgbackrest-plugin.core';
 import {
+  archivedSince,
+  CLEAR_COPIED_ARCHIVE_SETTINGS,
+  infoFromStanza,
+  parseArchivedSince,
+  SWITCH_SEGMENT,
   haArchivedEdgeScript,
   haRepositoryPrefix,
   haRestorePointScript,
@@ -57,6 +62,18 @@ import {
 const ARCHIVING_TIMEOUT_MS = 15 * 60_000;
 const BACKUP_TIMEOUT_MS = 2 * 60 * 60_000;
 const POLL_MS = 10_000;
+
+/** A failed exec rejects with a Kubernetes status, not an Error: its message is what says why. */
+export function describeFailure(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  const status = err as { message?: string; body?: { message?: string } };
+  return (
+    status?.message ??
+    status?.body?.message ??
+    JSON.stringify(err)?.slice(0, 300) ??
+    String(err)
+  );
+}
 
 interface HaTarget {
   app: ApplicationEntity;
@@ -202,6 +219,8 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
       t.kubeconfig,
       [secret, stanza].map((o) => k8s.dumpYaml(o)).join('---\n'),
     );
+    await this.forgetPromotedSource(t);
+    await this.clearCopiedArchiveSettings(t);
     await this.k8s.mergePatchObject(
       t.kubeconfig,
       archiveThroughPluginPatch({
@@ -209,7 +228,19 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
         namespace: t.namespace,
       }),
     );
-    await this.untilArchiving(t);
+    try {
+      await this.untilArchiving(t);
+    } catch (err) {
+      // A plugin left on a cluster that does not ship stops CloudNativePG
+      // from reconciling it, failover included.
+      await this.k8s
+        .mergePatchObject(
+          t.kubeconfig,
+          stopArchivingPatch({ cluster: t.ha.cluster, namespace: t.namespace }),
+        )
+        .catch(() => undefined);
+      throw err;
+    }
     this.logger.log(
       `[pgbackrest-ha] ${t.ha.cluster}: shipping its log to ${prefix}`,
     );
@@ -220,21 +251,68 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
    * proven once the primary has the sidecar and pgBackRest's own check, which
    * switches a segment and waits for it in the repository, passes.
    */
+  private async forgetPromotedSource(t: HaTarget): Promise<void> {
+    const cluster = await this.k8s.readObject(
+      t.kubeconfig,
+      CNPG_API_VERSION,
+      'Cluster',
+      t.ha.cluster,
+      t.namespace,
+    );
+    const replica = cluster?.spec?.replica;
+    if (replica && replica.enabled !== true) {
+      await this.k8s.mergePatchObject(
+        t.kubeconfig,
+        promotedReplicaPatch({ cluster: t.ha.cluster, namespace: t.namespace }),
+      );
+    }
+  }
+
   private async untilArchiving(t: HaTarget): Promise<void> {
+    const segment = (await this.postgres(t, SWITCH_SEGMENT))
+      .trim()
+      .split('\n')
+      .pop()!;
     const deadline = Date.now() + ARCHIVING_TIMEOUT_MS;
     let last = '';
     while (Date.now() < deadline) {
       try {
-        await this.sidecar(t, `pgbackrest --stanza=${PGBACKREST_STANZA} check`);
-        return;
+        const state = parseArchivedSince(
+          await this.postgres(t, archivedSince(segment)),
+        );
+        if (state.archived) return;
+        last = state.failed
+          ? `segment ${state.failed} failed to reach the repository`
+          : `segment ${segment} has not reached the repository yet`;
       } catch (err) {
-        last = err instanceof Error ? err.message : String(err);
+        last = describeFailure(err);
       }
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
     throw new Error(
       `The highly available cluster did not start shipping its log to the backup: ${last}`,
     );
+  }
+
+  /** The archive settings the copy brought along leave every instance, primary and copies alike. */
+  private async clearCopiedArchiveSettings(t: HaTarget): Promise<void> {
+    const pods = await this.k8s.listPodsByLabel(
+      t.kubeconfig,
+      t.namespace,
+      t.labelSelector,
+    );
+    for (const pod of pods) {
+      const name = pod?.metadata?.name;
+      if (!name) continue;
+      await this.k8s.execInPod(
+        t.kubeconfig,
+        t.namespace,
+        t.labelSelector,
+        'postgres',
+        ['sh', '-c', CLEAR_COPIED_ARCHIVE_SETTINGS],
+        name,
+      );
+    }
   }
 
   async disable(appId: string): Promise<void> {
@@ -304,12 +382,21 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
 
   async info(appId: string): Promise<PgBackupInfo> {
     const t = await this.target(appId);
-    const json = await this.sidecar(
-      t,
-      `pgbackrest --stanza=${PGBACKREST_STANZA} info --output=json`,
-    );
+    const stanza = await this.stanzaOf(t);
     const edge = await this.postgres(t, haArchivedEdgeScript()).catch(() => '');
-    return withArchivedEdge(parsePgbackrestInfo(json), edge);
+    return withArchivedEdge(infoFromStanza(stanza?.status), edge);
+  }
+
+  private stanzaOf(t: HaTarget): Promise<any> {
+    return this.k8s
+      .readObject(
+        t.kubeconfig,
+        PGBACKREST_PLUGIN_API_VERSION,
+        'Stanza',
+        pgbackrestStanzaName(t.ha.cluster),
+        t.namespace,
+      )
+      .catch(() => null);
   }
 
   async describeForArtifact(appId: string): Promise<ArtifactEngineFacts> {
@@ -320,19 +407,7 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
         (out) => out.trim().split('\n').pop(),
         () => undefined,
       );
-    const info = await this.sidecar(
-      t,
-      `pgbackrest --stanza=${PGBACKREST_STANZA} info --output=json`,
-    ).catch(() => '');
-    const stanza = await this.k8s
-      .readObject(
-        t.kubeconfig,
-        PGBACKREST_PLUGIN_API_VERSION,
-        'Stanza',
-        pgbackrestStanzaName(t.ha.cluster),
-        t.namespace,
-      )
-      .catch(() => null);
+    const stanza = await this.stanzaOf(t);
     return {
       engine: this.engine,
       engineVersion: await read(
@@ -348,7 +423,9 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
         objectKeyPrefix:
           stanza?.metadata?.annotations?.[REPOSITORY_ANNOTATION] ??
           this.artifactObjectPrefix(appId),
-        cipher: parseRepoCipher(info, PGBACKREST_STANZA) ?? 'unknown',
+        cipher:
+          stanza?.spec?.stanzaConfiguration?.s3Repositories?.[0]?.cipherConfig
+            ?.type ?? 'unknown',
       },
     };
   }

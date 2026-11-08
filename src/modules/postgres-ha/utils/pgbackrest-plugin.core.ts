@@ -201,6 +201,24 @@ export function archiveThroughPluginPatch(input: {
   };
 }
 
+/**
+ * A cluster that started as a copy keeps its `replica` section, disabled, once
+ * promoted. The plugin reads the source it names and fails on one that has no
+ * plugin of its own, which stops CloudNativePG from reconciling the cluster;
+ * the section serves nothing once the copy serves.
+ */
+export function promotedReplicaPatch(input: {
+  cluster: string;
+  namespace: string;
+}): Record<string, unknown> {
+  return {
+    apiVersion: CNPG_API_VERSION,
+    kind: 'Cluster',
+    metadata: { name: input.cluster, namespace: input.namespace },
+    spec: { replica: null },
+  };
+}
+
 /** Patch that stops the archiving: a JSON merge patch removes the list. */
 export function stopArchivingPatch(input: {
   cluster: string;

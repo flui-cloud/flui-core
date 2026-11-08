@@ -15,6 +15,7 @@ describe('continuous backup following a database to high availability', () => {
       engine: 'postgres-ha',
       mintGeneration: () => '20261108120000',
       enable: jest.fn(),
+      requireTooling: jest.fn().mockResolvedValue(undefined),
     };
     const service = new DatabaseHaBackupHandoverService(
       policyRepo as never,
