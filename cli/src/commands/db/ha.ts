@@ -64,8 +64,12 @@ function stateLines(view: DatabaseHaView, ref: string): string[] {
     ];
   }
   if (s.state === 'active') {
+    const notReady = (view.placement?.copies ?? []).filter((c) => !c.ready);
+    const header = notReady.length
+      ? `   ${chalk.yellow('Highly available, not all copies ready')}: ${s.instances - notReady.length} of ${s.instances} instances serve; until the rest are back it survives less`
+      : `   ${chalk.green('Highly available')}: ${s.instances} instances, one per location; survives losing a server or a location`;
     return [
-      `   ${chalk.green('Highly available')}: ${s.instances} instances, one per location; survives losing a server or a location`,
+      header,
       `   Writes: ${DURABILITY[s.durability]}`,
       ...placementLines(view.placement),
     ];

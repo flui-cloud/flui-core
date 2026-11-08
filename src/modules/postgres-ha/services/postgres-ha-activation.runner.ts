@@ -238,10 +238,18 @@ export class PostgresHaActivationRunner {
       OperationStep.DB_HA_SWITCH,
       'Moving the application to the new primary',
     );
+    // Recorded before the move: reconciliation reads a stopped single instance
+    // as intended only once the database is active.
     const active = state('active');
     await this.ports.saveState(active);
     await this.ports.patchAppService(primarySelectorPatch(plan.slug, cluster));
     await this.ports.scaleSingleInstance(0);
+    // The copies restart once the promotion reaches them; the operation ends
+    // when every instance serves again, not while they are still settling.
+    await this.waitFor(
+      this.timeouts.copyMs,
+      async () => (await this.ports.readyInstances(cluster)) >= plan.instances,
+    );
     return active;
   }
 
