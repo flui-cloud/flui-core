@@ -11,6 +11,7 @@ import {
   parseReplicatedPoolOutput,
   replicatedPoolHostScript,
 } from '../utils/replicated-volumes.core';
+import { replicatedVoteHostScript } from '../utils/replicated-votes.core';
 
 const JOB_TIMEOUT_MS = 15 * 60 * 1000;
 const JOB_POLL_MS = 3000;
@@ -43,6 +44,16 @@ export class ReplicatedPoolPreparer {
       });
     }
     return state;
+  }
+
+  /** A node that only votes gets the module's build headers, and no pool or copy label. */
+  async prepareVote(
+    kubeconfig: string,
+    node: string,
+  ): Promise<ReplicatedPoolState> {
+    return parseReplicatedPoolOutput(
+      await this.runHostScript(kubeconfig, node, replicatedVoteHostScript()),
+    );
   }
 
   /** Runs a script on the node itself, through the same privileged job, and returns what it printed. */

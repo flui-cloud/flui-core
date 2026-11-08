@@ -1,4 +1,5 @@
 import { HaCandidateNode } from '../../postgres-ha/utils/postgres-ha-feasibility.core';
+import { HEADERS_INSTALL } from './replicated-votes.core';
 import { HaTopology } from '../../providers/core/ha-topology';
 import {
   PIRAEUS_API_VERSION,
@@ -176,11 +177,7 @@ export function replicatedPoolHostScript(sizeGiB: number): string {
     `VG=${REPLICATED_VOLUME_GROUP}`,
     'export DEBIAN_FRONTEND=noninteractive',
     'KREL=$(uname -r)',
-    'if [ ! -d "/lib/modules/$KREL/build" ]; then',
-    '  apt-get update -qq >/dev/null 2>&1 || true',
-    '  apt-get install -y -qq "linux-headers-$KREL" >/dev/null 2>&1 || true',
-    '  apt-get install -y -qq "linux-headers-${KREL##*-}" >/dev/null 2>&1 || true',
-    'fi',
+    ...HEADERS_INSTALL,
     'if [ ! -d "/lib/modules/$KREL/build" ]; then echo "NOHEADERS $KREL"; exit 0; fi',
     'command -v vgcreate >/dev/null 2>&1 || apt-get install -y -qq lvm2 >/dev/null 2>&1 || true',
     'if ! vgs "$VG" >/dev/null 2>&1; then',
@@ -243,6 +240,7 @@ export function parseReplicatedPoolOutput(logs: string): ReplicatedPoolState {
     const line = raw.trim();
     const pool = /^POOL \S+ (\d+(?:\.\d+)?)$/.exec(line);
     if (pool) return { kind: 'ready', sizeGiB: Math.floor(Number(pool[1])) };
+    if (/^HEADERS \S+$/.test(line)) return { kind: 'ready', sizeGiB: 0 };
     const headers = /^NOHEADERS (\S+)$/.exec(line);
     if (headers) return { kind: 'no-headers', kernel: headers[1] };
     const space = /^NOSPACE (\d+)$/.exec(line);
