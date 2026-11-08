@@ -5,6 +5,7 @@ const hetzner: HaTopology = {
   zones: ['fsn1', 'nbg1', 'hel1'],
   dataZones: ['fsn1', 'nbg1'],
   validated: true,
+  measured: true,
 };
 
 describe('which highly available layout applies to a cluster', () => {
@@ -34,6 +35,7 @@ describe('which highly available layout applies to a cluster', () => {
         zones: ['fr-par-1', 'fr-par-2', 'fr-par-3'],
         dataZones: ['fr-par-1', 'fr-par-2', 'fr-par-3'],
         validated: false,
+        measured: false,
       },
     });
   });

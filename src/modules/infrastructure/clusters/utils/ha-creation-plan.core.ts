@@ -1,10 +1,14 @@
-import { HaTopology } from '../../../providers/core/ha-topology';
+import { HaTopology, locationList } from '../../../providers/core/ha-topology';
 
 /** A size as the provider's catalogue reports it, live for availability. */
 export interface CatalogueShape {
   name: string;
   architecture?: string;
-  availability?: Array<{ location: string; available: boolean }>;
+  availability?: Array<{
+    location: string;
+    available: boolean;
+    zones?: string[];
+  }>;
   prices?: Array<{ location: string; priceMonthly?: { net?: string } }>;
 }
 
@@ -28,33 +32,57 @@ export type HaCreationAnswer =
 
 const ALTERNATIVES_SHOWN = 3;
 
-function listOf(items: string[]): string {
-  return items.length < 2
-    ? items.join('')
-    : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
-}
-
-function availableIn(shape: CatalogueShape, zone: string): boolean {
+/**
+ * A catalogue entry for the zone itself (a Hetzner location), or for its
+ * region (Scaleway, OVH); a region's entry names the zones that sell the size
+ * when the provider says so, and otherwise counts for every zone.
+ */
+function coversZone(
+  location: string,
+  zone: string,
+  region: string,
+  zones?: string[],
+): boolean {
+  if (location === zone) return true;
   return (
-    shape.availability?.some((a) => a.location === zone && a.available) ?? false
+    location.toLowerCase() === region.toLowerCase() &&
+    (!zones || zones.includes(zone))
   );
 }
 
-function monthlyIn(shape: CatalogueShape, zone: string): number | null {
-  const net = shape.prices?.find((p) => p.location === zone)?.priceMonthly?.net;
+function availableIn(
+  shape: CatalogueShape,
+  zone: string,
+  region: string,
+): boolean {
+  return (
+    shape.availability?.some(
+      (a) => a.available && coversZone(a.location, zone, region, a.zones),
+    ) ?? false
+  );
+}
+
+function monthlyIn(
+  shape: CatalogueShape,
+  zone: string,
+  region: string,
+): number | null {
+  const net = shape.prices?.find((p) => coversZone(p.location, zone, region))
+    ?.priceMonthly?.net;
   const value = net === undefined ? Number.NaN : Number(net);
   return Number.isFinite(value) ? value : null;
 }
 
 function everywhere(
   catalogue: CatalogueShape[],
-  zones: string[],
+  topology: HaTopology,
   architecture: string | undefined,
 ): string[] {
+  const { zones, region } = topology;
   return catalogue
     .filter((s) => !architecture || s.architecture === architecture)
-    .filter((s) => zones.every((z) => availableIn(s, z)))
-    .map((s) => ({ name: s.name, price: monthlyIn(s, zones[0]) }))
+    .filter((s) => zones.every((z) => availableIn(s, z, region)))
+    .map((s) => ({ name: s.name, price: monthlyIn(s, zones[0], region) }))
     .sort(
       (a, b) =>
         (a.price ?? Number.POSITIVE_INFINITY) -
@@ -115,7 +143,7 @@ function noneAvailable(
   architecture: string | undefined,
 ): string {
   const verb = missing.length > 1 ? 'have' : 'has';
-  const none = `${listOf(missing)} ${verb} none of ${shapes.join(', ')} available now.`;
+  const none = `${locationList(missing)} ${verb} none of ${shapes.join(', ')} available now.`;
   if (alternatives.length) {
     return `${none} Sizes every location has: ${alternatives.join(', ')}.`;
   }
@@ -146,7 +174,7 @@ export function planHaCreation(input: PlanInput): HaCreationAnswer {
   const pick = (zone: string) =>
     shapes.find((name) => {
       const shape = catalogue.find((s) => s.name === name);
-      return shape ? availableIn(shape, zone) : false;
+      return shape ? availableIn(shape, zone, topology.region) : false;
     });
   const others = [
     ...topology.zones.filter(
@@ -164,7 +192,7 @@ export function planHaCreation(input: PlanInput): HaCreationAnswer {
       refusal: noneAvailable(
         missing,
         shapes,
-        everywhere(catalogue, topology.zones, architectures[0]),
+        everywhere(catalogue, topology, architectures[0]),
         architectures[0],
       ),
     };

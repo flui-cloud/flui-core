@@ -6,6 +6,7 @@ const EU_CENTRAL: HaTopology = {
   zones: ['fsn1', 'nbg1', 'hel1'],
   dataZones: ['fsn1', 'nbg1'],
   validated: true,
+  measured: true,
 };
 
 function shape(
@@ -147,5 +148,70 @@ describe('planHaCreation', () => {
       refusal:
         'Flui has not validated a highly available layout for us-east yet.',
     });
+  });
+});
+
+describe('planHaCreation where the catalogue is by region', () => {
+  const PAR: HaTopology = {
+    region: 'fr-par',
+    zones: ['fr-par-1', 'fr-par-2', 'fr-par-3'],
+    dataZones: ['fr-par-1', 'fr-par-2', 'fr-par-3'],
+    validated: true,
+    measured: true,
+  };
+  const byRegion = (
+    name: string,
+    location: string,
+    zones?: string[],
+  ): CatalogueShape => ({
+    name,
+    architecture: 'x86',
+    availability: [{ location, available: true, zones }],
+    prices: [{ location, priceMonthly: { net: '28.47' } }],
+  });
+
+  it('counts a size sold in the region for every zone the region names', () => {
+    const answer = planHaCreation({
+      topology: PAR,
+      firstZone: 'fr-par-1',
+      workerCount: 0,
+      completeLater: false,
+      shapes: ['BASIC3-X2C-4G', 'PRO2-XXS'],
+      catalogue: [
+        byRegion('BASIC3-X2C-4G', 'fr-par', ['fr-par-1', 'fr-par-2']),
+        byRegion('PRO2-XXS', 'fr-par', ['fr-par-1', 'fr-par-2', 'fr-par-3']),
+      ],
+    });
+
+    expect(answer.plan).toEqual({
+      region: 'fr-par',
+      first: { zone: 'fr-par-1', shape: 'BASIC3-X2C-4G' },
+      servers: [
+        { zone: 'fr-par-2', shape: 'BASIC3-X2C-4G' },
+        { zone: 'fr-par-3', shape: 'PRO2-XXS' },
+      ],
+      later: [],
+    });
+  });
+
+  it('counts a region that does not say which zones sell a size for all of them, whatever its case', () => {
+    const answer = planHaCreation({
+      topology: {
+        ...PAR,
+        region: 'eu-west-par',
+        zones: ['eu-west-par-a', 'eu-west-par-b', 'eu-west-par-c'],
+        dataZones: ['eu-west-par-a', 'eu-west-par-b', 'eu-west-par-c'],
+      },
+      firstZone: 'eu-west-par-a',
+      workerCount: 0,
+      completeLater: false,
+      shapes: ['c3-4'],
+      catalogue: [byRegion('c3-4', 'EU-WEST-PAR')],
+    });
+
+    expect(answer.plan?.servers.map((s) => s.zone)).toEqual([
+      'eu-west-par-b',
+      'eu-west-par-c',
+    ]);
   });
 });

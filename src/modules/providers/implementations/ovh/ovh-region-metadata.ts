@@ -1,4 +1,5 @@
 import { toMacroRegion } from '@flui-cloud/infra';
+import { NodeTopology } from '../../core/node-topology';
 
 /**
  * City-level decoration for OVH region codes.
@@ -113,3 +114,38 @@ export function ovhRegionMeta(code: string): OvhRegionMeta | undefined {
 }
 
 export const OVH_REGION_METADATA = META;
+
+const THREE_ZONE_REGION = /^[a-z]+-[a-z]+-[a-z]+$/;
+
+/**
+ * Where an OVH server runs: a zone of a region that has three
+ * (`eu-west-par-a` in `eu-west-par`). A region code alone stands for its first
+ * zone; a region with a single datacenter (`GRA11`) has no zones, so none.
+ */
+export function ovhNodeTopology(
+  location: string | null | undefined,
+): NodeTopology | null {
+  const raw = location?.trim().toLowerCase();
+  if (!raw) return null;
+  const region = raw.slice(0, raw.lastIndexOf('-'));
+  if (/-[a-z]$/.test(raw) && THREE_ZONE_REGION.test(region)) {
+    return { zone: raw, region };
+  }
+  return THREE_ZONE_REGION.test(raw) ? { zone: `${raw}-a`, region: raw } : null;
+}
+
+/** The zone a location names explicitly, or null when it names only a region and Nova picks. */
+export function ovhAvailabilityZone(
+  location: string | null | undefined,
+): string | null {
+  const zone = ovhNodeTopology(location)?.zone;
+  return zone && zone === location?.trim().toLowerCase() ? zone : null;
+}
+
+/** The compute region to ask Nova for: a zone's region, or the location as given. */
+export function ovhComputeRegionFor(
+  location: string | null | undefined,
+): string | undefined {
+  const zone = ovhAvailabilityZone(location);
+  return zone ? ovhNodeTopology(zone)?.region : (location ?? undefined);
+}

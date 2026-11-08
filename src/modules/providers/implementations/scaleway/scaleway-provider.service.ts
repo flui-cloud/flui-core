@@ -73,6 +73,10 @@ type ScalewayResourceId = {
 };
 
 import { toScalewayZone } from './scaleway-zone.util';
+import {
+  ScalewayZoneSecurityGroups,
+  parseScalewayFirewallId,
+} from './scaleway-zone-security-groups';
 import { normaliseArchitecture } from '../../core/catalogue/server-architecture';
 
 @Injectable()
@@ -863,15 +867,17 @@ export class ScalewayProviderService implements ICloudProvider {
       );
     }
 
-    // Extract the security group UUID from the first firewall ID (format: "<zone>:<sgId>")
+    // The first firewall's security group, or its copy in this server's zone (id format: "<zone>:<sgId>").
     // Passing security_group at creation time is the recommended approach — it ensures the
     // firewall rules are applied before the instance boots for the first time.
     let securityGroupId: string | undefined;
     if (config.firewalls && config.firewalls.length > 0) {
       const firstFw = config.firewalls[0];
-      const colonIdx = firstFw.indexOf(':');
-      if (colonIdx > 0) {
-        securityGroupId = firstFw.substring(colonIdx + 1);
+      const original = parseScalewayFirewallId(firstFw);
+      if (original) {
+        securityGroupId = await new ScalewayZoneSecurityGroups(
+          this.instancesAdapter,
+        ).inZone(token, original, zone);
         this.logger.log(
           `[Scaleway] Attaching security group ${securityGroupId} at instance creation time (from firewall ${firstFw})`,
         );
@@ -990,7 +996,7 @@ export class ScalewayProviderService implements ICloudProvider {
         const parts = firewallId.split(':');
         if (parts.length === 2) {
           const [fwZone, sgId] = parts;
-          if (i === 0 && securityGroupId === sgId) {
+          if (i === 0 && securityGroupId) {
             // Already set at creation time — just log confirmation
             this.logger.log(
               `[Scaleway] ✅ Security group ${sgId} was set at instance creation time (no extra call needed)`,
@@ -1403,7 +1409,7 @@ export class ScalewayProviderService implements ICloudProvider {
       CloudProvider.SCALEWAY,
     );
     const headers = { 'X-Auth-Token': token } as Record<string, string>;
-    const zones = ['fr-par-1', 'fr-par-2', 'nl-ams-1', 'pl-waw-1', 'it-mil-1'];
+    const zones: string[] = INSTANCE_ZONES;
     const results: ProviderVolumeSummary[] = [];
     for (const zone of zones) {
       try {
@@ -1524,6 +1530,7 @@ export class ScalewayProviderService implements ICloudProvider {
           {
             type: ReturnType<typeof Object.assign>;
             availableRegions: Set<string>;
+            zonesByRegion: Map<string, string[]>;
             pricesByRegion: Map<
               string,
               { hourly: number; monthlyCap?: number }
@@ -1552,11 +1559,16 @@ export class ScalewayProviderService implements ICloudProvider {
               typeMap.set(t.name, {
                 type: t,
                 availableRegions: new Set(),
+                zonesByRegion: new Map(),
                 pricesByRegion: new Map(),
               });
             }
             const entry = typeMap.get(t.name);
             entry.availableRegions.add(region);
+            entry.zonesByRegion.set(region, [
+              ...(entry.zonesByRegion.get(region) ?? []),
+              zone,
+            ]);
             if (t.hourly_price != null && !entry.pricesByRegion.has(region)) {
               entry.pricesByRegion.set(region, {
                 hourly: t.hourly_price,
@@ -1630,6 +1642,7 @@ export class ScalewayProviderService implements ICloudProvider {
               location: region,
               available: true,
               deprecated: t.end_of_service ?? false,
+              zones: entry.zonesByRegion.get(region),
             }),
           );
 

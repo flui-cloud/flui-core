@@ -102,7 +102,12 @@ export class FluiOpenStackClient extends OpenStackClient {
 
   async createVolume(
     region: string,
-    spec: { name: string; sizeGb: number; metadata?: Record<string, string> },
+    spec: {
+      name: string;
+      sizeGb: number;
+      metadata?: Record<string, string>;
+      availabilityZone?: string;
+    },
   ): Promise<CinderVolume> {
     const cinder = await this.endpoint(CINDER_SERVICE_TYPE, region);
     const body = await this.post<{ volume: CinderVolume }>(
@@ -112,6 +117,9 @@ export class FluiOpenStackClient extends OpenStackClient {
           name: spec.name,
           size: spec.sizeGb,
           ...(spec.metadata ? { metadata: spec.metadata } : {}),
+          ...(spec.availabilityZone
+            ? { availability_zone: spec.availabilityZone }
+            : {}),
         },
       },
     );

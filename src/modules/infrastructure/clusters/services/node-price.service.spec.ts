@@ -45,6 +45,28 @@ describe('NodePriceService', () => {
     ).resolves.toBe(0.0071);
   });
 
+  it('prices a zone as the region it belongs to', async () => {
+    const { service } = build([
+      size({
+        prices: [
+          {
+            location: 'GRA',
+            priceHourly: { net: '0.05', gross: '0.06' },
+            priceMonthly: { net: '36', gross: '43' },
+          },
+          {
+            location: 'EU-WEST-PAR',
+            priceHourly: { net: '0.0457', gross: '0.0548' },
+            priceMonthly: { net: '33', gross: '40' },
+          },
+        ],
+      }),
+    ]);
+    await expect(
+      service.resolveHourlyEur('ovh', 'cx32', 'eu-west-par-b'),
+    ).resolves.toBe(0.0457);
+  });
+
   it('falls back to the first location when none is given', async () => {
     const { service } = build([size()]);
     await expect(service.resolveHourlyEur('hetzner', 'cx32')).resolves.toBe(

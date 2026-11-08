@@ -10,11 +10,14 @@ import {
   REPLICATED_STORAGE_CLASS,
 } from '../replicated-volumes.constants';
 import {
+  SATELLITE_SELECTOR,
   controlPodsOnCopies,
+  stuckSatellites,
   renderLinstorCluster,
   renderReplicatedStorageClass,
   renderSatelliteConfigurations,
 } from '../utils/replicated-volumes.core';
+import { pinnedPiraeusManifest } from '../utils/piraeus-images';
 
 const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 5000;
@@ -87,6 +90,25 @@ export class PiraeusInstallerService {
     await this.waitDeployment(kubeconfig, LINSTOR_CONTROLLER_DEPLOYMENT);
   }
 
+  /** The satellites of `nodes` waiting out a crash backoff start again now, not minutes later. */
+  async restartStuckSatellites(
+    kubeconfig: string,
+    nodes: string[],
+  ): Promise<string[]> {
+    const core = this.kubernetesService
+      .makeKubeConfig(kubeconfig)
+      .makeApiClient(k8s.CoreV1Api);
+    const pods = await core.listNamespacedPod({
+      namespace: PIRAEUS_NAMESPACE,
+      labelSelector: SATELLITE_SELECTOR,
+    });
+    const stuck = stuckSatellites(pods.items ?? [], nodes);
+    for (const name of stuck) {
+      await core.deleteNamespacedPod({ name, namespace: PIRAEUS_NAMESPACE });
+    }
+    return stuck;
+  }
+
   /** Deleting the pod, not patching the Deployment, leaves the operator nothing to reconcile back. */
   async moveControlOffCopies(
     kubeconfig: string,
@@ -110,8 +132,8 @@ export class PiraeusInstallerService {
    * A storage class's parameters cannot change, so a class made with other
    * ones is replaced. Volumes already made keep their copies where they are.
    */
-  async ensureStorageClass(kubeconfig: string): Promise<void> {
-    const desired = renderReplicatedStorageClass();
+  async ensureStorageClass(kubeconfig: string, copies: number): Promise<void> {
+    const desired = renderReplicatedStorageClass(copies);
     const current = await this.readStorageClass(kubeconfig);
     if (
       current &&
@@ -137,7 +159,7 @@ export class PiraeusInstallerService {
         `Failed to fetch the Piraeus manifest from ${PIRAEUS_MANIFEST_URL}: ${response.status} ${response.statusText}`,
       );
     }
-    this.manifestCache = await response.text();
+    this.manifestCache = pinnedPiraeusManifest(await response.text());
     return this.manifestCache;
   }
 

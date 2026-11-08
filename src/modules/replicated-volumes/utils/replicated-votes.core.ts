@@ -1,9 +1,14 @@
-/** Installs the kernel headers the volume engine builds its module from, when they are missing. */
+/**
+ * Installs the kernel headers the volume engine builds its module from, and
+ * the package that follows the kernel's flavour (`linux-headers-generic`), so
+ * the next kernel an upgrade boots into comes with its headers too.
+ */
 export const HEADERS_INSTALL = [
-  'if [ ! -d "/lib/modules/$KREL/build" ]; then',
+  'KFLAVOUR="linux-headers-${KREL##*-}"',
+  'if [ ! -d "/lib/modules/$KREL/build" ] || ! dpkg -s "$KFLAVOUR" >/dev/null 2>&1; then',
   '  apt-get update -qq >/dev/null 2>&1 || true',
-  '  apt-get install -y -qq "linux-headers-$KREL" >/dev/null 2>&1 || true',
-  '  apt-get install -y -qq "linux-headers-${KREL##*-}" >/dev/null 2>&1 || true',
+  '  [ -d "/lib/modules/$KREL/build" ] || apt-get install -y -qq "linux-headers-$KREL" >/dev/null 2>&1 || true',
+  '  apt-get install -y -qq "$KFLAVOUR" >/dev/null 2>&1 || true',
   'fi',
 ];
 

@@ -566,6 +566,7 @@ describe('OvhProviderService.createServer — private NIC netplan injection', ()
     expect(userData).toContain('dhcp4-overrides');
     // Without this the private DHCP installs a competing default route.
     expect(userData).toContain('use-routes: false');
+    expect(userData).toContain('use-dns: false');
     // Without this a later boot blocks on systemd-networkd-wait-online.
     expect(userData).toContain('optional: true');
     expect(userData).toContain("export CLUSTER_ID='abc'");

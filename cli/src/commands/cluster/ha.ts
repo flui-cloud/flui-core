@@ -53,13 +53,14 @@ function headerLine(name: string, view: ClusterHaView): string {
 
 function zoneLines(view: ClusterHaView): string[] {
   if (!view.topology) return [];
+  const width = Math.max(8, ...view.topology.zones.map((z) => z.zone.length));
   return [
     '',
     ...view.topology.zones.map((z) => {
       const servers = z.servers.length
         ? z.servers.join(', ')
         : chalk.red('no server');
-      return `   ${z.zone.padEnd(8)} ${servers}${zoneData(z)}`;
+      return `   ${z.zone.padEnd(width)} ${servers}${zoneData(z)}`;
     }),
   ];
 }

@@ -66,6 +66,7 @@ describe('ClusterCreationService.createCluster — across three locations', () =
             zones: ['fsn1', 'nbg1', 'hel1'],
             dataZones: ['fsn1', 'nbg1'],
             validated: true,
+            measured: true,
           },
         ],
       }),
@@ -168,6 +169,7 @@ describe('ClusterCreationService.createCluster — across three locations', () =
       refusal: null,
       completeLaterHelps: false,
       region: 'eu-central',
+      measured: true,
       servers: [
         { zone: 'fsn1', shape: 'cpx22', role: 'data', first: true },
         { zone: 'nbg1', shape: 'cpx22', role: 'data', first: false },

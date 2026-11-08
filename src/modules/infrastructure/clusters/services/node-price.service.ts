@@ -10,6 +10,11 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
  * a provider without a catalogue, an unknown size and a failed lookup all
  * answer null, so a node row that carries a price carries a real one.
  */
+/** `fr-par-2` in `fr-par`, `eu-west-par-a` in `EU-WEST-PAR`: a zone priced as its region. */
+function isZoneOf(zone: string, location: string): boolean {
+  return zone.toLowerCase().startsWith(`${location.toLowerCase()}-`);
+}
+
 @Injectable()
 export class NodePriceService {
   private readonly logger = new Logger(NodePriceService.name);
@@ -35,7 +40,8 @@ export class NodePriceService {
     if (!size?.prices?.length) return null;
 
     const match = location
-      ? size.prices.find((p) => p.location === location)
+      ? (size.prices.find((p) => p.location === location) ??
+        size.prices.find((p) => isZoneOf(location, p.location)))
       : undefined;
     const raw = (match ?? size.prices[0]).priceHourly?.net;
     if (!raw) return null;

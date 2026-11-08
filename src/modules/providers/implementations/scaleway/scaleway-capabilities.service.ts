@@ -191,8 +191,21 @@ export class ScalewayCapabilitiesService
     }
   }
 
+  /**
+   * Scaleway's regions with three availability zones. Paris and Milan were
+   * measured by Flui's own bench (a round trip under 1.8 ms between zones);
+   * Amsterdam and Warsaw are taken on Scaleway's word. Every zone holds a copy
+   * of the data.
+   */
   haTopologies(): HaTopology[] {
-    return [];
+    const measured = new Set(['fr-par', 'it-mil']);
+    return ['fr-par', 'it-mil', 'nl-ams', 'pl-waw'].map((region) => ({
+      region,
+      zones: [`${region}-1`, `${region}-2`, `${region}-3`],
+      dataZones: [`${region}-1`, `${region}-2`, `${region}-3`],
+      validated: true,
+      measured: measured.has(region),
+    }));
   }
 
   nodeTopology(location: string | null | undefined): NodeTopology | null {
