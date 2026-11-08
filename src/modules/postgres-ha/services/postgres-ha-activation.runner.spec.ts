@@ -23,6 +23,7 @@ interface Script {
   fenceFails?: boolean;
   superuserPassword?: string | null;
   readyAfterPolls?: number;
+  settlingPolls?: number;
   caughtUp?: boolean;
   promoted?: boolean;
 }
@@ -32,6 +33,7 @@ function setup(script: Script = {}) {
   const states: DatabaseHaSpec[] = [];
   let clock = 0;
   let readyPolls = 0;
+  let settlePolls = 0;
   const record = (call: string): void => {
     calls.push(call);
   };
@@ -51,6 +53,11 @@ function setup(script: Script = {}) {
       record(`apply:${objects.map((o) => o.kind).join('+')}`),
     readyInstances: async () => {
       readyPolls++;
+      if (calls.includes('scale:0')) {
+        settlePolls++;
+        calls.push('ready-after-switch');
+        return settlePolls > (script.settlingPolls ?? 0) ? 3 : 2;
+      }
       return readyPolls > (script.readyAfterPolls ?? 0) ? 3 : 1;
     },
     primaryPod: async () => 'orders-db-ha-1',
@@ -104,9 +111,21 @@ describe('moving a database to its highly available cluster', () => {
     expect(order('fence')).toBeLessThan(order('promote'));
     expect(order('promote')).toBeLessThan(order('state:active'));
     expect(order('state:active')).toBeLessThan(order('switch-service'));
-    expect(calls[calls.length - 1]).toBe('scale:0');
+    expect(calls.filter((c) => c !== 'ready-after-switch').at(-1)).toBe(
+      'scale:0',
+    );
     expect(calls).not.toContain('unfence');
     expect(states.map((s) => s.state)).toEqual(['copying', 'active']);
+  });
+
+  it('ends once every instance serves again after the switch, not while the copies restart', async () => {
+    const { runner, calls } = setup({ settlingPolls: 2 });
+
+    await runner.run(plan);
+
+    const settling = calls.filter((c) => c === 'ready-after-switch');
+    expect(settling).toHaveLength(3);
+    expect(calls.at(-1)).toBe('ready-after-switch');
   });
 
   it('never holds writes when the copy does not become ready', async () => {
