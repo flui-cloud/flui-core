@@ -60,6 +60,10 @@ import { managementNetworkOn } from '../../networking/management-network.state';
 import type { OperationWarning } from '../processors/control-hub-hooks';
 
 /** What a cluster across three locations changes in its creation; nothing for a standard one. */
+// Bull does not stop a job past its timeout, it runs a second one beside it;
+// every creation also waits up to twenty minutes for the install to end.
+const CREATE_JOB_TIMEOUT_MS = 3_600_000;
+
 function haCreationFacts(plan: HaCreationPlan | null) {
   if (!plan) {
     return {
@@ -67,7 +71,7 @@ function haCreationFacts(plan: HaCreationPlan | null) {
       clusterMetadata: {},
       operationMetadata: {},
       serverZones: [] as string[],
-      jobTimeoutMs: 1_800_000,
+      jobTimeoutMs: CREATE_JOB_TIMEOUT_MS,
     };
   }
   return {
@@ -75,9 +79,7 @@ function haCreationFacts(plan: HaCreationPlan | null) {
     clusterMetadata: { highAvailability: 'three-locations' },
     operationMetadata: { haPlan: plan },
     serverZones: plan.servers.map((s) => s.zone),
-    // Bull does not stop a job past its timeout, it runs a second one beside
-    // it; a cluster across three locations also waits for the install to end.
-    jobTimeoutMs: 3_600_000,
+    jobTimeoutMs: CREATE_JOB_TIMEOUT_MS,
   };
 }
 

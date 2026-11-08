@@ -150,10 +150,12 @@ export class ClusterOrchestrationService {
   /**
    * Create master node for the cluster
    */
+  /** `location` pins the server to one zone of the cluster's region; the region otherwise. */
   async createMasterNode(
     cluster: ClusterEntity,
     operationId: string,
     providerFirewallIds?: string[],
+    location: string = cluster.region,
   ): Promise<ClusterNodeEntity> {
     this.logger.log(`Creating master node for cluster ${cluster.name}`);
 
@@ -169,7 +171,7 @@ export class ClusterOrchestrationService {
     const { caPublicKey, caPrivateKey } = await this.loadCaKeyPair();
 
     const controlClusterIp = await this.resolveControlClusterIp(cluster);
-    const topology = this.topologyOf(cluster.provider, cluster.region);
+    const topology = this.topologyOf(cluster.provider, location);
 
     // Create node record FIRST so we have the node.id for SERVER_ID in cloud-init
     const serverName = `${cluster.name}-master`;
@@ -177,6 +179,9 @@ export class ClusterOrchestrationService {
       cluster,
       serverName,
       NodeType.MASTER,
+      {},
+      null,
+      location,
     );
 
     // Resolve Flui shared storage config (NFS+fscache, see scaling doc §14).
@@ -302,7 +307,7 @@ export class ClusterOrchestrationService {
           name: serverName,
           provider: cluster.provider as CloudProvider,
           server_type: cluster.nodeSize,
-          location: cluster.region,
+          location,
           region: cluster.region,
           size: cluster.nodeSize,
           image: cluster.image || 'ubuntu-22.04',
@@ -327,7 +332,7 @@ export class ClusterOrchestrationService {
         provider: cluster.provider as CloudProvider,
         server_type: cluster.nodeSize,
         image: cluster.image || 'ubuntu-24.04',
-        location: cluster.region,
+        location,
         ssh_keys: localSSHKeyIds.length > 0 ? localSSHKeyIds : undefined,
         user_data: finalMasterScript,
         cluster_name: cluster.name,

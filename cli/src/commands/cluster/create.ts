@@ -7,9 +7,8 @@ import { listClusters } from '../../lib/cluster-listing';
 import { getRecommendedServerType } from '../../config/defaults';
 
 const POLL_INTERVAL_MS = 5000;
-const MAX_WAIT_MS = 1_800_000; // 30 min — matches the server-side estimate for master + N workers
-// Across three locations the API also waits for the install to end, up to an hour.
-const MAX_WAIT_HA_MS = 3_600_000;
+// The API waits for the install to end too, and gives a creation up to an hour.
+const MAX_WAIT_MS = 3_600_000;
 
 /** The sizes asked for, in order; the node size alone when none were. */
 function sizesOf(raw: string | undefined, nodeSize: string): string[] {
@@ -22,17 +21,29 @@ function sizesOf(raw: string | undefined, nodeSize: string): string[] {
 
 function nodeLines(plan: HaPlan | null, workerCount: number): string[] {
   if (!plan) return [`  ${chalk.bold('Worker nodes:')} ${workerCount}`];
+  const width = Math.max(
+    6,
+    ...plan.servers.map((s) => s.zone.length),
+    ...plan.later.map((zone) => zone.length),
+  );
   return [
     `  ${chalk.bold('Availability:')} three locations (${plan.region})`,
     ...plan.servers.map((s) => {
       const role = s.role === 'data' ? 'copies of data' : 'votes';
       const first = s.first ? ', starts the cluster' : '';
-      return `                ${s.zone.padEnd(6)} ${s.shape.padEnd(8)} ${role}${first}`;
+      return `                ${s.zone.padEnd(width)} ${s.shape.padEnd(8)} ${role}${first}`;
     }),
     ...plan.later.map(
       (zone) =>
-        `                ${zone.padEnd(6)} ${chalk.yellow('none available now: add it later')}`,
+        `                ${zone.padEnd(width)} ${chalk.yellow('none available now: add it later')}`,
     ),
+    ...(plan.measured === false
+      ? [
+          chalk.dim(
+            '                The provider declares these as close zones of one region; Flui has not measured them yet.',
+          ),
+        ]
+      : []),
   ];
 }
 
@@ -51,6 +62,7 @@ function haRequest(
 
 interface HaPlan {
   region: string;
+  measured?: boolean;
   servers: Array<{
     zone: string;
     shape: string;
@@ -391,12 +403,7 @@ export default class ClusterCreate extends Command {
       return;
     }
 
-    await this.waitForCreation(
-      apiClient,
-      operationId,
-      args.name,
-      flags.ha ? MAX_WAIT_HA_MS : MAX_WAIT_MS,
-    );
+    await this.waitForCreation(apiClient, operationId, args.name, MAX_WAIT_MS);
   }
 
   private async waitForCreation(

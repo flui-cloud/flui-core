@@ -52,6 +52,11 @@ export interface HaJoined {
   readyMessage: string;
 }
 
+/** Throws when the creation must stop; checked between servers and while waiting. */
+export type StopCheck = () => Promise<void>;
+
+const keepGoing: StopCheck = async () => undefined;
+
 /** Writes a step of the creation's operation; the job owns the operation. */
 export type OperationStepWriter = (
   step: number,
@@ -127,6 +132,7 @@ export class HaServerJoinService {
     bought: { purchases: Promise<HaPurchase[]> },
     operationId: string,
     step: OperationStepWriter,
+    stop: StopCheck = keepGoing,
   ): Promise<HaJoined> {
     const purchases = await bought.purchases;
     const notBought = purchases.filter((p) => p.error);
@@ -141,6 +147,7 @@ export class HaServerJoinService {
     const { joined, failed } = await this.joinWaitingServers(
       cluster,
       operationId,
+      stop,
     );
     for (const f of failed) {
       this.logger.warn(
@@ -171,11 +178,17 @@ export class HaServerJoinService {
   async waitForPlatform(
     cluster: ClusterEntity,
     step: OperationStepWriter,
+    stepIndex = 4,
+    stop: StopCheck = keepGoing,
   ): Promise<{ at: string | null; problem: string | null }> {
-    await step(4, 20, {
+    await step(stepIndex, 20, {
       message: 'Waiting for Flui to finish installing on the first server',
     });
-    const state = await this.waitForPlatformInstalled(cluster);
+    const state = await this.waitForPlatformInstalled(
+      cluster,
+      PLATFORM_INSTALL_TIMEOUT_MS,
+      stop,
+    );
     if (state === 'installed') {
       return { at: new Date().toISOString(), problem: null };
     }
@@ -236,6 +249,7 @@ export class HaServerJoinService {
   async joinWaitingServers(
     cluster: ClusterEntity,
     operationId: string,
+    stop: StopCheck = keepGoing,
   ): Promise<{
     joined: ClusterNodeEntity[];
     failed: Array<{ name: string; zone: string | null; error: string }>;
@@ -265,6 +279,7 @@ export class HaServerJoinService {
     const failed: Array<{ name: string; zone: string | null; error: string }> =
       [];
     for (const node of waiting) {
+      await stop();
       try {
         await this.handOverJoinDetails(cluster, node, privateKey, details);
         joined.push(
@@ -290,6 +305,7 @@ export class HaServerJoinService {
   async waitForPlatformInstalled(
     cluster: ClusterEntity,
     timeoutMs = PLATFORM_INSTALL_TIMEOUT_MS,
+    stop: StopCheck = keepGoing,
   ): Promise<'installed' | 'stopped' | 'timeout'> {
     const master = cluster.masterNodeId
       ? await this.nodeRepository.findOne({
@@ -303,6 +319,7 @@ export class HaServerJoinService {
     const privateKey = await this.orchestration.bootstrapPrivateKey(cluster);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      await stop();
       try {
         const out = await this.nativeSsh.execCommand(
           host,

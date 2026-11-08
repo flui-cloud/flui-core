@@ -8,7 +8,7 @@ import {
   RecoverNodeAccessJob,
 } from '../services/node-access-recovery.service';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
   CreateClusterJobData,
   DeleteClusterJobData,
@@ -96,6 +96,22 @@ const ZONE_RECONCILE_ATTEMPTS = 5;
 const ZONE_RECONCILE_DELAY_MS = 30_000;
 
 const REMOVAL_HAND_ON_LIMIT = 5;
+
+const CREATION_STOP_WAIT_MS = 30 * 60_000;
+const CREATION_STOP_POLL_MS = 10_000;
+
+class CreationCancelled extends Error {}
+
+function beingDestroyed(cluster: ClusterEntity): boolean {
+  return (
+    !!cluster.deletedAt ||
+    [
+      ClusterStatus.DELETING,
+      ClusterStatus.DELETION_FAILED,
+      ClusterStatus.DELETED,
+    ].includes(cluster.status)
+  );
+}
 
 @Processor('infrastructure')
 export class ClusterQueueProcessor {
@@ -388,6 +404,7 @@ export class ClusterQueueProcessor {
         cluster,
         operationId,
         providerFirewallIds,
+        haPlan?.first.zone,
       );
       const k3sReadyAt = new Date().toISOString();
 
@@ -408,6 +425,7 @@ export class ClusterQueueProcessor {
         timestamp: new Date(),
       } as InfrastructureOperationProgressDto);
 
+      await this.stopIfDestroyed(clusterId);
       cluster.nodeCount = 1;
       await this.clusterRepository.save(cluster);
 
@@ -483,10 +501,18 @@ export class ClusterQueueProcessor {
 
       if (isSingleNode) {
         // === SINGLE-NODE: STEP 3 = FINALIZE ===
+        const completion = await this.completionOf(
+          cluster,
+          operationId,
+          null,
+          k3sReadyAt,
+          { stepIndex: 3, ready: 'Single-node cluster ready' },
+        );
         await this.updateOperationStep(operationId, 3, 50, {
           message: 'Finalizing single-node cluster',
         });
 
+        await this.stopIfDestroyed(clusterId);
         cluster.status = ClusterStatus.READY;
         await this.clusterRepository.save(cluster);
 
@@ -505,7 +531,7 @@ export class ClusterQueueProcessor {
 
         await this.updateOperationStep(operationId, 3, 100, {
           status: OperationStatus.COMPLETED,
-          message: 'Single-node cluster ready',
+          ...completion,
           clusterName: cluster.name,
           masterIp: cluster.masterIpAddress,
           nodeCount: 1,
@@ -561,6 +587,7 @@ export class ClusterQueueProcessor {
           timestamp: new Date(),
         } as InfrastructureOperationProgressDto);
 
+        await this.stopIfDestroyed(clusterId);
         cluster.nodeCount = initial.nodeCount;
         await this.clusterRepository.save(cluster);
         await this.clusterFirewallIntegrationService.syncHostLayer(clusterId);
@@ -576,6 +603,7 @@ export class ClusterQueueProcessor {
           message: 'Finalizing multi-node cluster',
         });
 
+        await this.stopIfDestroyed(clusterId);
         cluster.status = ClusterStatus.READY;
         await this.clusterRepository.save(cluster);
 
@@ -618,53 +646,70 @@ export class ClusterQueueProcessor {
         );
       }
     } catch (error) {
-      this.logger.error(
-        `❌ Cluster creation failed for ${clusterId}: ${error.message}`,
-        error.stack,
-      );
-
-      // Update operation as failed
-      const failedOp = await this.operationRepository.findOne({
-        where: { id: operationId },
-      });
-      if (failedOp) {
-        failedOp.status = OperationStatus.FAILED;
-        failedOp.errorMessage = error.message;
-        failedOp.completedAt = new Date();
-        failedOp.metadata = {
-          ...failedOp.metadata,
-          error: error.message,
-          stack: error.stack,
-          clusterId,
-          failedAt: new Date().toISOString(),
-        };
-        await this.operationRepository.save(failedOp);
+      if (error instanceof CreationCancelled) {
+        this.logger.warn(`Creation of ${clusterId} stopped: ${error.message}`);
+        await this.updateOperationStatus(
+          operationId,
+          OperationStatus.CANCELLED,
+          { message: error.message },
+        );
+        return;
       }
-
-      this.infraGateway.emitFailed(operationId, clusterId, {
-        operationId,
-        resourceId: clusterId,
-        operationType: OperationType.CREATE_CLUSTER,
-        resourceType: 'cluster',
-        error: error.message,
-        timestamp: new Date(),
-      } as InfrastructureOperationFailedDto);
-
-      // Update cluster status to error
-      const errorCluster = await this.clusterRepository.findOne({
-        where: { id: clusterId },
-      });
-      if (errorCluster) {
-        errorCluster.status = ClusterStatus.ERROR;
-        errorCluster.metadata = {
-          ...errorCluster.metadata,
-          error: error.message,
-          failedAt: new Date().toISOString(),
-        };
-        await this.clusterRepository.save(errorCluster);
-      }
-
+      await this.recordCreationFailure(operationId, clusterId, error);
       throw error; // Re-throw for Bull to handle retries
+    }
+  }
+
+  /** The operation and the cluster say why the creation failed, before Bull retries it. */
+  private async recordCreationFailure(
+    operationId: string,
+    clusterId: string,
+    error: Error,
+  ): Promise<void> {
+    this.logger.error(
+      `❌ Cluster creation failed for ${clusterId}: ${error.message}`,
+      error.stack,
+    );
+
+    // Update operation as failed
+    const failedOp = await this.operationRepository.findOne({
+      where: { id: operationId },
+    });
+    if (failedOp) {
+      failedOp.status = OperationStatus.FAILED;
+      failedOp.errorMessage = error.message;
+      failedOp.completedAt = new Date();
+      failedOp.metadata = {
+        ...failedOp.metadata,
+        error: error.message,
+        stack: error.stack,
+        clusterId,
+        failedAt: new Date().toISOString(),
+      };
+      await this.operationRepository.save(failedOp);
+    }
+
+    this.infraGateway.emitFailed(operationId, clusterId, {
+      operationId,
+      resourceId: clusterId,
+      operationType: OperationType.CREATE_CLUSTER,
+      resourceType: 'cluster',
+      error: error.message,
+      timestamp: new Date(),
+    } as InfrastructureOperationFailedDto);
+
+    // Update cluster status to error
+    const errorCluster = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (errorCluster) {
+      errorCluster.status = ClusterStatus.ERROR;
+      errorCluster.metadata = {
+        ...errorCluster.metadata,
+        error: error.message,
+        failedAt: new Date().toISOString(),
+      };
+      await this.clusterRepository.save(errorCluster);
     }
   }
 
@@ -702,6 +747,8 @@ export class ClusterQueueProcessor {
         message: 'Starting cluster deletion...',
         timestamp: new Date(),
       } as InfrastructureOperationProgressDto);
+
+      await this.waitForCreationToStop(clusterId);
 
       // Load cluster with nodes
       const cluster = await this.clusterRepository.findOne({
@@ -2718,11 +2765,52 @@ export class ClusterQueueProcessor {
    * Whether a run of the creation must stop before doing anything; a Bull
    * retry after a failed attempt starts over from CREATING.
    */
+  /**
+   * The creation saves the cluster it read at its start; once a deletion has
+   * begun that would bring the cluster back, and the deletion, which reads the
+   * nodes once, would leave every server bought after it running.
+   */
+  /**
+   * The nodes are read once, so a creation still buying servers must stop
+   * first; it does at its next check, between servers or while it waits.
+   */
+  private async waitForCreationToStop(clusterId: string): Promise<void> {
+    const deadline = Date.now() + CREATION_STOP_WAIT_MS;
+    while (Date.now() < deadline) {
+      const running = await this.operationRepository.findOne({
+        where: {
+          operationType: OperationType.CREATE_CLUSTER,
+          resourceId: clusterId,
+          status: In([OperationStatus.PENDING, OperationStatus.IN_PROGRESS]),
+        },
+      });
+      if (!running) return;
+      this.logger.log(
+        `Deletion of ${clusterId} waits for its creation ${running.id} to stop`,
+      );
+      await new Promise((r) => setTimeout(r, CREATION_STOP_POLL_MS));
+    }
+    this.logger.warn(
+      `Creation of ${clusterId} did not stop within ${CREATION_STOP_WAIT_MS / 60_000} minutes; deleting what exists now`,
+    );
+  }
+
+  private async stopIfDestroyed(clusterId: string): Promise<void> {
+    const fresh = await this.clusterRepository.findOne({
+      where: { id: clusterId },
+    });
+    if (!fresh || beingDestroyed(fresh)) {
+      throw new CreationCancelled(
+        'The cluster is being deleted, so its creation stopped',
+      );
+    }
+  }
+
   private async resumeOrStop(
     cluster: ClusterEntity,
     operationId: string,
   ): Promise<boolean> {
-    if (cluster.status !== ClusterStatus.DELETED && !cluster.deletedAt) {
+    if (!beingDestroyed(cluster)) {
       if (cluster.status === ClusterStatus.ERROR) {
         cluster.status = ClusterStatus.CREATING;
         await this.clusterRepository.save(cluster);
@@ -2775,6 +2863,7 @@ export class ClusterQueueProcessor {
       operationId,
       (step, progress, data) =>
         this.updateOperationStep(operationId, step, progress, data),
+      () => this.stopIfDestroyed(cluster.id),
     );
     return {
       nodeCount: 1 + joined.joined,
@@ -2788,24 +2877,35 @@ export class ClusterQueueProcessor {
   }
 
   /** How the creation ends: a cluster across three locations waits for the install and says what it reached. */
+  /**
+   * Ready once Flui finished installing on the master, not when K3s answered:
+   * the components it installs come minutes later. A cluster whose install
+   * stopped or ran late still exists, so that is said, not undone.
+   */
   private async completionOf(
     cluster: ClusterEntity,
     operationId: string,
     ha: HaJoined | null,
     k3sReadyAt: string,
+    { stepIndex = 4, ready = 'Multi-node cluster ready' } = {},
   ): Promise<Record<string, unknown>> {
-    if (!ha) return { message: 'Multi-node cluster ready' };
     const platform = await this.haServerJoin.waitForPlatform(
       cluster,
       (step, progress, data) =>
         this.updateOperationStep(operationId, step, progress, data),
+      stepIndex,
+      () => this.stopIfDestroyed(cluster.id),
     );
     return {
-      message: [ha.readyMessage, platform.problem].filter(Boolean).join('. '),
+      message: [ha?.readyMessage ?? ready, platform.problem]
+        .filter(Boolean)
+        .join('. '),
       k3sReadyAt,
-      serversJoinedAt: ha.joinedAt,
       platformInstalledAt: platform.at,
-      missingLocations: ha.missing,
+      ...(ha && {
+        serversJoinedAt: ha.joinedAt,
+        missingLocations: ha.missing,
+      }),
     };
   }
 
