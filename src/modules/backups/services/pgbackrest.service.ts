@@ -62,6 +62,7 @@ import {
   restoreFailureFrom,
   withArchivedEdge,
 } from './pgbackrest-config.util';
+import { databaseHaServes } from '../../postgres-ha/postgres-ha.types';
 
 /**
  * Drives pgBackRest inside a managed Postgres pod over `kubectl exec`. Config +
@@ -92,7 +93,18 @@ export class PgBackrestService implements ContinuousBackupEngine {
     private readonly retirer: PgLegacyRepoRetirer,
   ) {}
 
+  /**
+   * A highly available database serves from CloudNativePG's instances, whose
+   * image has no pgBackRest and whose log shipping the operator owns; refused
+   * the way a missing tool is, so the scheduled dump takes over.
+   */
   async requireTooling(appId: string): Promise<void> {
+    const app = await this.appRepo.findOne({ where: { id: appId } });
+    if (databaseHaServes(app?.databaseHa)) {
+      throw new BadRequestException(
+        'A highly available database ships its log through its own instances, not the single one.',
+      );
+    }
     await this.requirePgBackrest(await this.resolveTarget(appId));
   }
 

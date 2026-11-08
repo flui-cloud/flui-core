@@ -1,4 +1,7 @@
 jest.mock('@kubernetes/client-node', () => ({}));
+jest.mock('../utils/cnpg-images', () => ({
+  pinnedCnpgManifest: (manifest: string) => `pinned ${manifest}`,
+}));
 
 import { CnpgOperatorInstallerService } from './cnpg-operator-installer.service';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
@@ -42,7 +45,7 @@ describe('installing the Postgres HA operator only when it is needed', () => {
     expect(fetchMock).toHaveBeenCalledWith(CNPG_MANIFEST_URL);
     expect(kubernetes.serverSideApply).toHaveBeenCalledWith(
       'kc',
-      'kind: Namespace',
+      'pinned kind: Namespace',
     );
     expect(kubernetes.applyManifest).not.toHaveBeenCalled();
   });

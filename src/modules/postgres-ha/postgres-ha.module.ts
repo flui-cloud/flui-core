@@ -4,7 +4,6 @@ import { BullModule } from '@nestjs/bull';
 import { ApplicationEntity } from '../applications/entities/application.entity';
 import { ClusterEntity } from '../infrastructure/clusters/entities/cluster.entity';
 import { InfrastructureOperationEntity } from '../infrastructure/servers/entities/infrastructure-operations.entity';
-import { BackupPolicyEntity } from '../backups/entities/backup-policy.entity';
 import { SharedInfrastructureModule } from '../infrastructure/shared/shared-infrastructure.module';
 import { EncryptionModule } from '../shared/encryption/encryption.module';
 import { DbLifecycleModule } from '../db-lifecycle/db-lifecycle.module';
@@ -25,7 +24,6 @@ import { POSTGRES_HA_QUEUE } from './postgres-ha.constants';
       ApplicationEntity,
       ClusterEntity,
       InfrastructureOperationEntity,
-      BackupPolicyEntity,
     ]),
     BullModule.registerQueue({ name: POSTGRES_HA_QUEUE }),
     SharedInfrastructureModule,

@@ -306,6 +306,15 @@ export class AppRuntimeResponseDto {
       'Set when some replicas wait for a node with room: that is a wait, not a failure, and it lasts as long as scaling takes.',
   })
   waitingForRoom?: RoomWaitDto | null;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description:
+      'Set when the number of copies cannot be changed, nor the application stopped or started: a highly available database, whose instances Flui keeps across three locations.',
+  })
+  replicasRefusal?: string | null;
 }
 
 export class ResourcesConsequenceDto {

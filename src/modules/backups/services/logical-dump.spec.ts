@@ -23,13 +23,33 @@ describe('choosing the engine that protects a database', () => {
   };
   const ok = async () => undefined;
 
-  const registry = (pg: any, pgDump: any) =>
+  const registry = (
+    pg: any,
+    pgDump: any,
+    pgHa = engine('postgres-ha', refuse('not highly available')),
+  ) =>
     new ContinuousBackupEngineRegistry(
       pg,
       engine('mariadb', ok),
       pgDump,
       engine('mariadb-dump', ok),
+      pgHa,
     );
+
+  it('keeps continuous backup through the instances of a highly available database, before any dump', async () => {
+    const pg = engine(
+      'postgres',
+      refuse('ships its log through its own instances'),
+    );
+    const dump = engine('postgres-dump', ok);
+    const chosen = await registry(
+      pg,
+      dump,
+      engine('postgres-ha', ok),
+    ).chooseFor('postgres', 'app-1');
+    expect(chosen.engine).toBe('postgres-ha');
+    expect(dump.requireTooling).not.toHaveBeenCalled();
+  });
 
   it('keeps continuous backup when the image can ship its log', async () => {
     const pg = engine('postgres', ok);
