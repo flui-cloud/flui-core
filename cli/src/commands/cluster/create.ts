@@ -470,6 +470,14 @@ export default class ClusterCreate extends Command {
         console.log(chalk.red(`\n  Error: ${msg}\n`));
         return 'failed';
       }
+      if (op.status === 'CANCELLED') {
+        waitSpinner.warn('Creation stopped');
+        const msg =
+          op.metadata?.message ??
+          'The cluster was deleted while it was created';
+        console.log(chalk.yellow(`\n  ${msg}\n`));
+        return 'failed';
+      }
     } catch {
       /* polling error — keep trying */
     }
