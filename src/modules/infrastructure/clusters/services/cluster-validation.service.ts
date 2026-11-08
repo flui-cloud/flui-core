@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Not } from 'typeorm';
+import { Repository, Not, IsNull } from 'typeorm';
 import { ClusterEntity, ClusterStatus } from '../entities/cluster.entity';
 import { CreateClusterDto } from '../dto/create-cluster.dto';
 import { NameAvailabilityResponseDto } from '../dto/name-availability.dto';
@@ -52,8 +52,9 @@ export class ClusterValidationService {
     name: string,
     provider: CloudProvider,
   ): Promise<NameAvailabilityResponseDto> {
+    // A destroyed cluster frees its name even when a late job rewrote its status.
     const existingCluster = await this.clusterRepository.findOne({
-      where: { name, status: Not(ClusterStatus.DELETED) },
+      where: { name, status: Not(ClusterStatus.DELETED), deletedAt: IsNull() },
     });
     if (existingCluster) {
       return {

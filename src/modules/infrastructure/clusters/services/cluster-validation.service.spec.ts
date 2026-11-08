@@ -126,6 +126,8 @@ describe('ClusterValidationService.checkNameAvailability', () => {
     const whereArg = clusterRepo.findOne.mock.calls[0][0].where;
     expect(whereArg.status._type).toBe('not');
     expect(whereArg.status._value).toBe(ClusterStatus.DELETED);
+    // A destroyed cluster a late job left in `error`.
+    expect(whereArg.deletedAt._type).toBe('isNull');
   });
 
   it('reuses the provider server list across calls instead of re-scanning per candidate name', async () => {
