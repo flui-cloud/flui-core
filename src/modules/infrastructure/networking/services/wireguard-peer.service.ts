@@ -58,6 +58,8 @@ export interface HandshakeTransition {
   peer: WireGuardPeerEntity;
 }
 
+const ADDRESS_ATTEMPTS = 5;
+
 @Injectable()
 export class WireGuardPeerService {
   private readonly logger = new Logger(WireGuardPeerService.name);
@@ -284,21 +286,46 @@ export class WireGuardPeerService {
     if (existing) return existing;
 
     const pool = await this.poolFor(params.subnetId);
-    const taken = await this.allocatedAddresses();
-    const peer = this.peers.create({
-      clusterId: params.clusterId,
-      nodeId: params.nodeId,
-      role: WireGuardPeerRole.MEMBER,
-      publicKey: null,
-      managementIp: pool.allocate(taken),
-      subnetId: params.subnetId ?? null,
-      listenPort: params.subnetId ? WG_DEFAULT_PORT : null,
-      status: WireGuardPeerStatus.PENDING,
-    });
+    const peer = await this.saveOnFreeAddress(params.nodeId, (taken) =>
+      this.peers.create({
+        clusterId: params.clusterId,
+        nodeId: params.nodeId,
+        role: WireGuardPeerRole.MEMBER,
+        publicKey: null,
+        managementIp: pool.allocate(taken),
+        subnetId: params.subnetId ?? null,
+        listenPort: params.subnetId ? WG_DEFAULT_PORT : null,
+        status: WireGuardPeerStatus.PENDING,
+      }),
+    );
     this.logger.log(
       `[wg] address ${peer.managementIp} reserved for node ${params.nodeId}`,
     );
-    return this.peers.save(peer);
+    return peer;
+  }
+
+  /**
+   * Nodes bought together reserve their addresses at the same moment, and two
+   * can pick the same free one; the unique index refuses the second. It reads
+   * the taken addresses again and takes the next, or the peer the same node
+   * got meanwhile.
+   */
+  private async saveOnFreeAddress(
+    nodeId: string,
+    build: (taken: string[]) => WireGuardPeerEntity,
+  ): Promise<WireGuardPeerEntity> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.peers.save(build(await this.allocatedAddresses()));
+      } catch (err) {
+        if ((err as { code?: string })?.code !== '23505') throw err;
+        const mine = await this.peers.findOne({
+          where: { nodeId, revokedAt: IsNull() },
+        });
+        if (mine) return mine;
+        if (attempt >= ADDRESS_ATTEMPTS) throw err;
+      }
+    }
   }
 
   /**
@@ -327,24 +354,25 @@ export class WireGuardPeerService {
     }
 
     const pool = await this.poolFor(input.subnetId);
-    const taken = await this.allocatedAddresses();
-    const peer = this.peers.create({
-      clusterId: input.clusterId,
-      nodeId: input.nodeId,
-      role: WireGuardPeerRole.MEMBER,
-      publicKey: input.publicKey,
-      managementIp: pool.allocate(taken),
-      endpointHost: input.endpointHost ?? null,
-      subnetId: input.subnetId ?? null,
-      // A mesh member listens; a management-overlay member does not. Recording
-      // it here is what lets the renderer tell the two apart later.
-      listenPort: input.subnetId ? WG_DEFAULT_PORT : null,
-      status: WireGuardPeerStatus.PENDING,
-    });
+    const peer = await this.saveOnFreeAddress(input.nodeId, (taken) =>
+      this.peers.create({
+        clusterId: input.clusterId,
+        nodeId: input.nodeId,
+        role: WireGuardPeerRole.MEMBER,
+        publicKey: input.publicKey,
+        managementIp: pool.allocate(taken),
+        endpointHost: input.endpointHost ?? null,
+        subnetId: input.subnetId ?? null,
+        // A mesh member listens; a management-overlay member does not. Recording
+        // it here is what lets the renderer tell the two apart later.
+        listenPort: input.subnetId ? WG_DEFAULT_PORT : null,
+        status: WireGuardPeerStatus.PENDING,
+      }),
+    );
     this.logger.log(
       `[wg] node ${input.nodeId} enrolled at ${peer.managementIp}`,
     );
-    return this.peers.save(peer);
+    return peer;
   }
 
   /** Withdraws a peer. Its address stays claimed — see allocatedAddresses. */

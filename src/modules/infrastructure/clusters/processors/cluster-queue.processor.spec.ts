@@ -76,7 +76,9 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
         plan ? { purchases: Promise.resolve([]) } : null,
       ),
       joinBought: jest.fn(),
-      waitForPlatform: jest.fn(),
+      waitForPlatform: jest
+        .fn()
+        .mockResolvedValue({ at: '2026-11-08T12:00:00Z', problem: null }),
     };
     const capabilitiesFactory = {
       getCapabilitiesService: jest.fn().mockReturnValue({
@@ -143,6 +145,7 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       haServerJoin,
       infraGateway,
       clusterFirewallIntegrationService,
+      clusterRepository,
     };
   }
 
@@ -290,6 +293,43 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
 
     expect(infraGateway.emitCompleted).toHaveBeenCalledTimes(1);
     expect(infraGateway.emitFailed).not.toHaveBeenCalled();
+  });
+
+  it('stops, without bringing the cluster back, when it is deleted while its servers are being made', async () => {
+    const { run, cluster, operation, orchestrationService, clusterRepository } =
+      build(2);
+    clusterRepository.findOne
+      .mockResolvedValueOnce(cluster)
+      .mockResolvedValue({ ...cluster, status: ClusterStatus.DELETING });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(orchestrationService.createWorkerNodes).not.toHaveBeenCalled();
+    expect(cluster.status).toBe(ClusterStatus.CREATING);
+    expect(clusterRepository.save).not.toHaveBeenCalled();
+    expect(operation.status).toBe(OperationStatus.CANCELLED);
+  });
+
+  it('waits for Flui to finish installing on a standard cluster too, and says when it did not', async () => {
+    const { run, cluster, operation, haServerJoin } = build(0);
+    haServerJoin.waitForPlatform.mockResolvedValue({
+      at: null,
+      problem: 'Flui had not finished installing on the first server in time',
+    });
+
+    await run();
+
+    expect(haServerJoin.waitForPlatform).toHaveBeenCalledWith(
+      cluster,
+      expect.any(Function),
+      3,
+      expect.any(Function),
+    );
+    expect(cluster.status).toBe(ClusterStatus.READY);
+    expect(operation.metadata.message).toBe(
+      'Single-node cluster ready. Flui had not finished installing on the first server in time',
+    );
+    expect(operation.metadata.platformInstalledAt).toBeNull();
   });
 });
 
@@ -679,6 +719,9 @@ describe('ClusterQueueProcessor.handleDeleteCluster', () => {
       remove: jest.fn().mockResolvedValue(undefined),
       delete: jest.fn().mockResolvedValue(undefined),
     };
+    const operationRepository = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
     const billingIntervals = {
       closeNodeIntervals: jest.fn().mockResolvedValue(undefined),
       closeVolumeIntervals: jest.fn().mockResolvedValue(undefined),
@@ -695,6 +738,7 @@ describe('ClusterQueueProcessor.handleDeleteCluster', () => {
         debug: jest.fn(),
       },
       clusterRepository,
+      operationRepository,
       nodeRepository,
       billingIntervals,
       updateOperationStatus: jest.fn().mockResolvedValue(undefined),
@@ -724,8 +768,37 @@ describe('ClusterQueueProcessor.handleDeleteCluster', () => {
         id: 'job-1',
         data: { operationId: 'op-1', clusterId: 'cluster-1', force },
       } as never);
-    return { run, clusterRepository, nodeRepository, billingIntervals };
+    return {
+      run,
+      clusterRepository,
+      operationRepository,
+      nodeRepository,
+      billingIntervals,
+    };
   }
+
+  it('reads the nodes only once a creation still running has stopped', async () => {
+    jest.useFakeTimers();
+    try {
+      const t = build(false, [
+        { id: 'n1', serverName: 'master', providerResourceId: '123' },
+      ]);
+      t.operationRepository.findOne
+        .mockResolvedValueOnce({ id: 'op-create', status: 'in_progress' })
+        .mockResolvedValue(null);
+
+      const done = t.run();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(t.clusterRepository.findOne).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(10_000);
+      await done;
+
+      expect(t.operationRepository.findOne).toHaveBeenCalledTimes(2);
+      expect(t.clusterRepository.findOne).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 
   it.each([false, true])(
     'ends every billed lifetime and every node record at the deletion time (force=%s)',

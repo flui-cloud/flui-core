@@ -134,7 +134,9 @@ export class ClusterDeletionService {
         type: 'exponential',
         delay: 2000,
       },
-      timeout: 600000, // 10 minutes
+      // Bull runs a second job beside one past its timeout; the deletion may
+      // first wait up to thirty minutes for a creation still running to stop.
+      timeout: 2_700_000,
     });
 
     this.logger.log(

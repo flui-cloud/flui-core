@@ -304,6 +304,28 @@ describe('WireGuardPeerService', () => {
       expect(peer.publicKey).toBeNull();
     });
 
+    it('gives nodes bought together an address each, though they ask at the same moment', async () => {
+      await enrolControl();
+      const plainSave = peers.save;
+      peers.save = async (x: any) => {
+        const clash = peers.rows.some(
+          (r) =>
+            r !== x && r.revokedAt == null && r.managementIp === x.managementIp,
+        );
+        if (!x.id && clash)
+          throw Object.assign(new Error('duplicate key'), { code: '23505' });
+        return plainSave(x);
+      };
+
+      const reserved = await Promise.all(
+        ['master', 'w1', 'w2'].map((nodeId) =>
+          svc.reserveAddress({ clusterId: 'w', nodeId }),
+        ),
+      );
+
+      expect(new Set(reserved.map((p) => p.managementIp)).size).toBe(3);
+    });
+
     it('is idempotent — a second call returns the same address', async () => {
       await enrolControl();
       const first = await svc.reserveAddress({ clusterId: 'w', nodeId: 'n1' });
