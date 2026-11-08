@@ -28,6 +28,8 @@ import {
   HaActivationError,
   PostgresHaActivationRunner,
 } from '../services/postgres-ha-activation.runner';
+import { ModuleRef } from '@nestjs/core';
+import { DatabaseHaBackupHandoverService } from '../../backups/services/database-ha-backup-handover.service';
 
 const DEFAULT_SIZE_GI = 10;
 
@@ -51,7 +53,29 @@ export class PostgresHaProcessor {
     private readonly encryption: EncryptionService,
     private readonly exec: DbPodExecService,
     private readonly adapter: PostgresHaPortsAdapter,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  /**
+   * The database's continuous backup follows it to the cluster that now
+   * serves. Looked up at run time: backups depend on databases, not the
+   * other way round. A failure leaves the database highly available and says
+   * that its backup did not follow, which is the one thing to act on.
+   */
+  private async handBackupOver(appId: string): Promise<string | null> {
+    try {
+      const handover = this.moduleRef.get(DatabaseHaBackupHandoverService, {
+        strict: false,
+      });
+      return await handover.handOver(appId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `[postgres-ha] ${appId}: backup not handed over: ${message}`,
+      );
+      return `The database is highly available, but its continuous backup did not move to the new cluster: ${message}. Until it does, no new backup is taken.`;
+    }
+  }
 
   @Process(POSTGRES_HA_JOB_ACTIVATE)
   async activate(job: Job<ActivateDatabaseHaJob>): Promise<void> {
@@ -86,10 +110,12 @@ export class PostgresHaProcessor {
         podNetwork: CLUSTER_POD_NETWORK,
         replicationPassword: randomBytes(24).toString('hex'),
       });
+      const backup = await this.handBackupOver(appId);
       await this.operations.update(operationId, {
         status: OperationStatus.COMPLETED,
         progress: 100,
         completedAt: new Date(),
+        ...(backup && { errorMessage: backup }),
       });
       this.logger.log(`[postgres-ha] ${app.slug}: served by ${spec.cluster}`);
     } catch (error) {

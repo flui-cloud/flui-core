@@ -103,6 +103,23 @@ if [ "${FLUI_PG_RESTORE:-}" = "1" ] && [ "${FLUI_PG_STANDBY:-}" != "1" ] && [ ! 
   else
     gosu postgres pgbackrest --config="$RESTORE_CONF" --stanza=main --delta restore
   fi
+  # A backup a highly available cluster took carries CloudNativePG's own
+  # configuration: certificates and a socket under /controller, and access rules
+  # for its operator. This instance has neither, so it starts from the image's
+  # configuration and keeps only the data.
+  if [ -f "$PGDATA/custom.conf" ] || [ -f "$PGDATA/override.conf" ]; then
+    echo "[flui-entrypoint] restore-bootstrap: the backup came from a highly available cluster; using this image's configuration"
+    mkdir -p "$PVC_ROOT/cnpg-configuration"
+    for f in postgresql.conf custom.conf override.conf pg_hba.conf pg_ident.conf; do
+      if [ -f "$PGDATA/$f" ]; then mv "$PGDATA/$f" "$PVC_ROOT/cnpg-configuration/$f"; fi
+    done
+    cp /usr/share/postgresql/postgresql.conf.sample "$PGDATA/postgresql.conf"
+    printf "\n# Flui managed\ninclude_if_exists = '/etc/flui/postgresql.flui.conf'\n" >> "$PGDATA/postgresql.conf"
+    printf 'local all all trust\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\nhost all all all scram-sha-256\n' > "$PGDATA/pg_hba.conf"
+    : > "$PGDATA/pg_ident.conf"
+    chown postgres:postgres "$PGDATA/postgresql.conf" "$PGDATA/pg_hba.conf" "$PGDATA/pg_ident.conf"
+    chmod 0600 "$PGDATA/postgresql.conf" "$PGDATA/pg_hba.conf" "$PGDATA/pg_ident.conf"
+  fi
   # The restored postgresql.auto.conf carries the source's archive_command,
   # whose config file lives outside PGDATA and was not restored — neutralize it
   # or WAL recycling stalls. Enabling backup on this install rewrites it.

@@ -32,9 +32,6 @@ import {
   REPLICATION_SQL,
   databaseHaPlacement,
 } from '../utils/database-ha-placement.core';
-import { BackupPolicyEntity } from '../../backups/entities/backup-policy.entity';
-import { BackupEngineClass } from '../../backups/enums/backup-engine-class.enum';
-import { BackupScope } from '../../backups/enums/backup-scope.enum';
 import {
   haCandidatesFrom,
   postgresHaFeasibility,
@@ -69,8 +66,6 @@ export class PostgresHaService {
     private readonly clusters: Repository<ClusterEntity>,
     @InjectRepository(InfrastructureOperationEntity)
     private readonly operations: Repository<InfrastructureOperationEntity>,
-    @InjectRepository(BackupPolicyEntity)
-    private readonly backupPolicies: Repository<BackupPolicyEntity>,
     @InjectQueue(POSTGRES_HA_QUEUE) private readonly queue: Queue,
     private readonly kubernetes: KubernetesService,
     private readonly encryption: EncryptionService,
@@ -171,27 +166,6 @@ export class PostgresHaService {
     return running > 0;
   }
 
-  /** An enabled database policy that names this application, its namespace or its whole cluster. */
-  private async hasContinuousBackups(app: ApplicationEntity): Promise<boolean> {
-    const policies = await this.backupPolicies.find({
-      where: {
-        clusterId: app.clusterId,
-        engineClass: BackupEngineClass.DATABASE,
-        enabled: true,
-      },
-    });
-    return policies.some((p) => {
-      if (p.scope === BackupScope.CLUSTER_ALL) return true;
-      if (p.scope === BackupScope.APPLICATIONS) {
-        return p.scopeSelector?.applicationIds?.includes(app.id) ?? false;
-      }
-      if (p.scope === BackupScope.NAMESPACES) {
-        return p.scopeSelector?.namespaces?.includes(app.k8sNamespace) ?? false;
-      }
-      return false;
-    });
-  }
-
   /**
    * Checks what can be checked before anything moves, so a request the cluster
    * cannot honour is refused with its reason, then hands the move to the queue.
@@ -209,11 +183,6 @@ export class PostgresHaService {
     );
     if (!eligibility.eligible)
       throw new BadRequestException((eligibility as { reason: string }).reason);
-    if (await this.hasContinuousBackups(app)) {
-      throw new BadRequestException(
-        'This database has continuous backups, and a highly available database cannot take them yet: after the move they would stop. Pause its backup policy first, knowing it will be unprotected, or wait until highly available databases are backed up.',
-      );
-    }
 
     const ha = await this.clusterHa.requireThreeLocations(
       app.clusterId,

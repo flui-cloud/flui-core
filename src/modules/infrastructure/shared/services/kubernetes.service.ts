@@ -1371,7 +1371,7 @@ export class KubernetesService {
     const kc = this.loadKubeconfig(kubeconfigContent);
     const coreApi = kc.makeApiClient(k8s.CoreV1Api);
     const pods = await coreApi.listNamespacedPod({ namespace, labelSelector });
-    const pod = (pods.items ?? []).find((p) => p.status?.phase === 'Running');
+    const pod = runningPodForDatabase(pods.items ?? []);
     if (!pod?.metadata?.name) {
       throw new Error(
         `No running pod found with selector "${labelSelector}" in namespace "${namespace}"`,

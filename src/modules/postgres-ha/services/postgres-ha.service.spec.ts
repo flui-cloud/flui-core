@@ -14,8 +14,6 @@ import {
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { postgresHaEligibility } from '../utils/postgres-ha-eligibility.core';
-import { BackupPolicyEntity } from '../../backups/entities/backup-policy.entity';
-import { BackupScope } from '../../backups/enums/backup-scope.enum';
 
 const flui = (over: Record<string, unknown> = {}) =>
   ({
@@ -77,11 +75,7 @@ describe('which databases can be made highly available', () => {
 });
 
 describe('asking for a highly available database', () => {
-  function setup(
-    app: ApplicationEntity,
-    nodes: unknown[],
-    policies: Array<Partial<BackupPolicyEntity>> = [],
-  ) {
+  function setup(app: ApplicationEntity, nodes: unknown[]) {
     const saved: Array<Partial<InfrastructureOperationEntity>> = [];
     const queued: unknown[] = [];
     const service = new PostgresHaService(
@@ -102,9 +96,6 @@ describe('asking for a highly available database', () => {
           return { ...o, id: 'op-1' };
         }),
       } as unknown as Repository<InfrastructureOperationEntity>,
-      {
-        find: jest.fn(async () => policies),
-      } as unknown as Repository<BackupPolicyEntity>,
       {
         add: jest.fn(async (_name: string, data: unknown) => queued.push(data)),
       } as unknown as Queue,
@@ -129,6 +120,7 @@ describe('asking for a highly available database', () => {
               zones: ['fsn1', 'nbg1', 'hel1'],
               dataZones: ['fsn1', 'nbg1'],
               validated: true,
+              measured: true,
             },
           };
         }),
@@ -183,35 +175,13 @@ describe('asking for a highly available database', () => {
     expect(queued).toEqual([]);
   });
 
-  /** Until a highly available database can be backed up, moving it would silently end its backups. */
-  it('refuses a database its continuous backups cover, and says what to do', async () => {
-    const nodes = threeLocations;
-    for (const policy of [
-      {
-        scope: BackupScope.APPLICATIONS,
-        scopeSelector: { applicationIds: ['db-1'] },
-      },
-      {
-        scope: BackupScope.NAMESPACES,
-        scopeSelector: { namespaces: ['p-orders'] },
-      },
-      { scope: BackupScope.CLUSTER_ALL, scopeSelector: {} },
-    ]) {
-      const { service, queued } = setup(flui(), nodes, [policy]);
-      await expect(service.activate('db-1', {})).rejects.toThrow(
-        /continuous backups/,
-      );
-      expect(queued).toEqual([]);
-    }
-    const { service } = setup(flui(), nodes, [
-      {
-        scope: BackupScope.APPLICATIONS,
-        scopeSelector: { applicationIds: ['other'] },
-      },
-    ]);
+  /** Its continuous backup follows it to the cluster once the move ends. */
+  it('moves a database its continuous backups cover', async () => {
+    const { service, queued } = setup(flui(), threeLocations);
     await expect(service.activate('db-1', {})).resolves.toMatchObject({
       operationId: 'op-1',
     });
+    expect(queued).toHaveLength(1);
   });
 });
 
@@ -237,7 +207,6 @@ describe('the view of a highly available database', () => {
         findOne: jest.fn(async () => ({ id: 'c1', kubeconfigEncrypted: 'e' })),
       } as unknown as Repository<ClusterEntity>,
       {} as Repository<InfrastructureOperationEntity>,
-      {} as Repository<BackupPolicyEntity>,
       {} as Queue,
       {
         readObject: jest.fn(async () => ({

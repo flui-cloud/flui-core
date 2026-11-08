@@ -63,7 +63,9 @@ describe('the highly available Postgres Flui asks the operator for', () => {
   it("pins the image to the major of Flui's own Postgres unless told otherwise", () => {
     expect(
       (renderCnpgCluster(base).spec as Record<string, any>).imageName,
-    ).toBe('ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie');
+    ).toBe(
+      'ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:4d0aac315c4d8c3202252bd06fea83b16951cc57234a7b610eeaa382ff4482d0',
+    );
     expect(
       (
         renderCnpgCluster({ ...base, imageName: 'registry/pg:17.12' })

@@ -67,6 +67,12 @@ import {
 import { systemReplicasRefusal } from '../schedulers/platform-api-sizing';
 import { databaseHaServes } from '../../postgres-ha/postgres-ha.types';
 import { CNPG_API_VERSION } from '../../postgres-ha/postgres-ha.constants';
+import {
+  CNPG_RESTART_ANNOTATION,
+  databaseHaReplicasRefusal,
+  databaseHaResizeRefusal,
+  mergedResources,
+} from '../utils/database-ha-edits.core';
 
 /** Rollout poll interval (ms) */
 const ROLLOUT_POLL_INTERVAL_MS = 3000;
@@ -111,6 +117,16 @@ export class AppManagementService {
     },
   ): Promise<AppRuntimeResponseDto> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
+    const resizeRefused = databaseHaResizeRefusal(app.databaseHa);
+    if (resizeRefused) throw new ConflictException(resizeRefused);
+    if (databaseHaServes(app.databaseHa)) {
+      return this.updateHaResources(
+        app,
+        kubeconfig,
+        this.normalizedResources(dto),
+        context,
+      );
+    }
     const {
       kind,
       name: deploymentName,
@@ -176,25 +192,7 @@ export class AppManagementService {
       `Updated resources for container "${container.name}" in ${kind} "${deploymentName}"`,
     );
 
-    // Sync DB entity so the stored resources reflect the live state
-    const merged = this.buildEntityResources(dto, app.resources);
-    await this.applicationsRepository.update(appId, { resources: merged });
-
-    // Audit event
-    await this.appRevisionsRepository.createAuditEvent({
-      applicationId: appId,
-      eventType: AppEventType.RESOURCE_UPDATE,
-      actor: context?.actor
-        ? { type: AppEventActorType.USER, ...context.actor }
-        : { type: AppEventActorType.API },
-      changeMetadata: {
-        before: beforeResources ?? {},
-        after: merged,
-        containerName: dto.containerName ?? null,
-        ...(context?.reason ? { reason: context.reason } : {}),
-        ...(context?.proposal ? { proposal: context.proposal } : {}),
-      },
-    });
+    await this.recordResources(app, dto, beforeResources, context);
 
     // Fire-and-forget: track the rollout until all pods are ready
     this.watchRollout(
@@ -208,11 +206,88 @@ export class AppManagementService {
     return this.buildRuntimeResponse(app, kubeconfig);
   }
 
+  /**
+   * A highly available database takes new resources on its cluster, which
+   * restarts the instances one at a time with the primary last; the single
+   * instance at zero has nothing to change.
+   */
+  private async updateHaResources(
+    app: ApplicationEntity,
+    kubeconfig: string,
+    dto: UpdateResourcesDto,
+    context?: {
+      actor?: { id?: string; name?: string };
+      reason?: string;
+      proposal?: string[];
+    },
+  ): Promise<AppRuntimeResponseDto> {
+    const name = app.databaseHa!.cluster;
+    const cluster = await this.kubernetesService.readObject(
+      kubeconfig,
+      CNPG_API_VERSION,
+      'Cluster',
+      name,
+      app.k8sNamespace,
+    );
+    if (!cluster) {
+      throw new NotFoundException(
+        `The highly available cluster ${name} of this database is not there`,
+      );
+    }
+    const merged = mergedResources(cluster.spec?.resources ?? {}, dto);
+    const healed = healedResources(merged);
+    const resources = healed ? { ...merged, ...healed } : merged;
+    const belowRequest = limitBelowRequest(healed ?? {});
+    if (belowRequest) throw new BadRequestException(belowRequest);
+    await this.kubernetesService.mergePatchObject(kubeconfig, {
+      apiVersion: CNPG_API_VERSION,
+      kind: 'Cluster',
+      metadata: { name, namespace: app.k8sNamespace },
+      spec: { resources },
+    });
+    this.logger.log(
+      `Updated resources of the highly available cluster ${name} in ${app.k8sNamespace}`,
+    );
+    await this.recordResources(app, dto, app.resources, context);
+    return this.buildRuntimeResponse(app, kubeconfig);
+  }
+
+  /** Keeps the stored resources on the live ones, and says who changed them. */
+  private async recordResources(
+    app: ApplicationEntity,
+    dto: UpdateResourcesDto,
+    before: ApplicationResources | undefined,
+    context?: {
+      actor?: { id?: string; name?: string };
+      reason?: string;
+      proposal?: string[];
+    },
+  ): Promise<void> {
+    const merged = this.buildEntityResources(dto, app.resources);
+    await this.applicationsRepository.update(app.id, { resources: merged });
+    await this.appRevisionsRepository.createAuditEvent({
+      applicationId: app.id,
+      eventType: AppEventType.RESOURCE_UPDATE,
+      actor: context?.actor
+        ? { type: AppEventActorType.USER, ...context.actor }
+        : { type: AppEventActorType.API },
+      changeMetadata: {
+        before: before ?? {},
+        after: merged,
+        containerName: dto.containerName ?? null,
+        ...(context?.reason ? { reason: context.reason } : {}),
+        ...(context?.proposal ? { proposal: context.proposal } : {}),
+      },
+    });
+  }
+
   async applyReplicas(
     appId: string,
     replicas: number,
   ): Promise<{ app: ApplicationEntity; kubeconfig: string; previous: number }> {
     const { app, kubeconfig } = await this.resolveAppAndKubeconfig(appId);
+    const haRefused = databaseHaReplicasRefusal(app.databaseHa);
+    if (haRefused) throw new ConflictException(haRefused);
     const refused = systemReplicasRefusal(app, replicas);
     if (refused) throw new BadRequestException(refused);
     const { kind, name: deploymentName } = await this.getWorkloadOrThrow(
@@ -274,12 +349,33 @@ export class AppManagementService {
       'restart',
     );
     if (refused) throw new ConflictException(refused);
+    const moving = databaseHaResizeRefusal(app.databaseHa);
+    if (moving) throw new ConflictException(moving);
+    const restartedAt = new Date().toISOString();
+    if (databaseHaServes(app.databaseHa)) {
+      await this.kubernetesService.mergePatchObject(kubeconfig, {
+        apiVersion: CNPG_API_VERSION,
+        kind: 'Cluster',
+        metadata: {
+          name: app.databaseHa.cluster,
+          namespace: app.k8sNamespace,
+          annotations: { [CNPG_RESTART_ANNOTATION]: restartedAt },
+        },
+      });
+      await this.appRevisionsRepository.createAuditEvent({
+        applicationId: appId,
+        eventType: AppEventType.RESTART,
+        actor: { type: AppEventActorType.API },
+        changeMetadata: { triggeredAt: restartedAt, highlyAvailable: true },
+        envSnapshot: app.env ?? [],
+      });
+      return this.buildRuntimeResponse(app, kubeconfig);
+    }
     const { kind, name: deploymentName } = await this.getWorkloadOrThrow(
       app,
       kubeconfig,
     );
 
-    const restartedAt = new Date().toISOString();
     await this.kubernetesService.restartWorkload(
       kubeconfig,
       kind,
@@ -866,6 +962,7 @@ export class AppManagementService {
         replicas.ready ?? 0,
         pods,
       ),
+      replicasRefusal: databaseHaReplicasRefusal(app.databaseHa),
     };
   }
 

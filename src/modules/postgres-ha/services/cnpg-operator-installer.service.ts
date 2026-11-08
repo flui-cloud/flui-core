@@ -7,6 +7,7 @@ import {
   CNPG_VERSION,
 } from '../postgres-ha.constants';
 import { cnpgOperatorPlacement } from '../utils/cnpg-operator-placement.core';
+import { pinnedCnpgManifest } from '../utils/cnpg-images';
 
 const READY_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = 3000;
@@ -61,7 +62,7 @@ export class CnpgOperatorInstallerService {
         `Failed to fetch the CloudNativePG manifest from ${CNPG_MANIFEST_URL}: ${response.status} ${response.statusText}`,
       );
     }
-    this.manifestCache = await response.text();
+    this.manifestCache = pinnedCnpgManifest(await response.text());
     return this.manifestCache;
   }
 

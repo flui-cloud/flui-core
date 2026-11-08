@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ContinuousBackupEngine } from './continuous-backup-engine.interface';
 import { PgBackrestService } from './pgbackrest.service';
+import { PgBackrestHaService } from './pgbackrest-ha.service';
 import { MariadbPitrService } from './mariadb-pitr.service';
 import {
   MariadbDumpService,
@@ -20,23 +21,27 @@ import {
 export class ContinuousBackupEngineRegistry {
   private readonly engines: ReadonlyMap<string, ContinuousBackupEngine>;
 
-  private readonly dumpFallback: ReadonlyMap<string, ContinuousBackupEngine>;
+  private readonly fallbacks: ReadonlyMap<string, ContinuousBackupEngine[]>;
 
   constructor(
     pgbackrest: PgBackrestService,
     mariadb: MariadbPitrService,
     postgresDump: PostgresDumpService,
     mariadbDump: MariadbDumpService,
+    pgbackrestHa: PgBackrestHaService,
   ) {
     this.engines = new Map<string, ContinuousBackupEngine>([
       [pgbackrest.engine, pgbackrest],
       [mariadb.engine, mariadb],
       [postgresDump.engine, postgresDump],
       [mariadbDump.engine, mariadbDump],
+      [pgbackrestHa.engine, pgbackrestHa],
     ]);
-    this.dumpFallback = new Map<string, ContinuousBackupEngine>([
-      [pgbackrest.engine, postgresDump],
-      [mariadb.engine, mariadbDump],
+    // A highly available Postgres keeps continuous backup through its own
+    // instances before anything falls back to a dump.
+    this.fallbacks = new Map<string, ContinuousBackupEngine[]>([
+      [pgbackrest.engine, [pgbackrestHa, postgresDump]],
+      [mariadb.engine, [mariadbDump]],
     ]);
   }
 
@@ -55,14 +60,16 @@ export class ContinuousBackupEngineRegistry {
       await continuous.requireTooling(appId);
       return continuous;
     } catch (err) {
-      const dump = this.dumpFallback.get(continuous.engine);
-      if (!dump || !(err instanceof BadRequestException)) throw err;
-      try {
-        await dump.requireTooling(appId);
-      } catch {
-        throw err;
+      if (!(err instanceof BadRequestException)) throw err;
+      for (const next of this.fallbacks.get(continuous.engine) ?? []) {
+        try {
+          await next.requireTooling(appId);
+          return next;
+        } catch {
+          continue;
+        }
       }
-      return dump;
+      throw err;
     }
   }
 

@@ -78,7 +78,7 @@ describe('moving a single Postgres into a highly available one', () => {
       password: { name: 'orders-db-ha-repl', key: 'password' },
     });
     expect(spec.imageName).toBe(
-      'ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie',
+      'ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:4d0aac315c4d8c3202252bd06fea83b16951cc57234a7b610eeaa382ff4482d0',
     );
     expect(spec.affinity.topologyKey).toBe('topology.kubernetes.io/zone');
     expect(

@@ -46,6 +46,8 @@ import {
   remoteName,
   restorePasswords,
 } from '../utils/rclone-crypt.util';
+import { databaseHaServes } from '../../postgres-ha/postgres-ha.types';
+import { runningPodForDatabase } from '../../infrastructure/shared/utils/database-pod.util';
 
 const JOB_TIMEOUT_SECONDS = 2 * 60 * 60;
 const JOB_POLL_INTERVAL_MS = 5_000;
@@ -123,7 +125,10 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
       app.k8sNamespace,
       labelSelector,
     );
-    const pod = pods.find((p: any) => p?.status?.phase === 'Running');
+    const ha = databaseHaServes(app.databaseHa);
+    const pod = ha
+      ? runningPodForDatabase(pods)
+      : pods.find((p: any) => p?.status?.phase === 'Running');
     if (!pod) {
       throw new BadRequestException(
         'This database is not running, so it cannot be backed up. Start it and try again.',
@@ -138,8 +143,14 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
       app.k8sNamespace,
       labelSelector,
     );
-    const service = services[0];
+    const service = ha
+      ? (services.find((s: any) => s.metadata?.name === `${app.slug}-svc`) ??
+        services[0])
+      : services[0];
     const port = service?.spec?.ports?.[0]?.port ?? this.family.defaultPort;
+    const credentials = ha
+      ? await this.singleInstanceCredentials(kubeconfig, app)
+      : null;
     return {
       kubeconfig,
       namespace: app.k8sNamespace,
@@ -147,8 +158,8 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
       labelSelector,
       container: container.name,
       image: container.image,
-      env: container.env ?? [],
-      envFrom: container.envFrom ?? [],
+      env: credentials?.env ?? container.env ?? [],
+      envFrom: credentials?.envFrom ?? container.envFrom ?? [],
       imagePullSecrets: pod.spec?.imagePullSecrets ?? [],
       tolerations: pod.spec?.tolerations ?? [],
       host: service
@@ -156,6 +167,32 @@ abstract class LogicalDumpEngine implements ContinuousBackupEngine {
         : pod.status.podIP,
       port,
     };
+  }
+
+  /**
+   * A highly available database's instances carry no application credentials
+   * in their env; the single instance kept at zero still does, and its users
+   * and passwords are the ones the copy kept.
+   */
+  private async singleInstanceCredentials(
+    kubeconfig: string,
+    app: ApplicationEntity,
+  ): Promise<{ env: unknown[]; envFrom: unknown[] } | null> {
+    const sts = await this.k8s
+      .readObject(
+        kubeconfig,
+        'apps/v1',
+        'StatefulSet',
+        app.slug,
+        app.k8sNamespace,
+      )
+      .catch(() => null);
+    const containers: any[] = sts?.spec?.template?.spec?.containers ?? [];
+    const container =
+      containers.find((c) => c.name === app.slug) ?? containers[0];
+    return container
+      ? { env: container.env ?? [], envFrom: container.envFrom ?? [] }
+      : null;
   }
 
   private async exec(target: DumpTarget, script: string): Promise<string> {

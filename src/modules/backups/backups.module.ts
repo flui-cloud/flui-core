@@ -100,6 +100,9 @@ import { AppVolumeBackupProcessor } from './processors/app-volume-backup.process
 import { VeleroUninstallService } from './services/velero-uninstall.service';
 import { UninstallVeleroProcessor } from './processors/uninstall-velero.processor';
 import { VeleroUninstallController } from './controllers/velero-uninstall.controller';
+import { PgBackrestHaService } from './services/pgbackrest-ha.service';
+import { DatabaseHaBackupHandoverService } from './services/database-ha-backup-handover.service';
+import { PgbackrestPluginInstallerService } from '../postgres-ha/services/pgbackrest-plugin-installer.service';
 
 @Module({
   imports: [
@@ -180,6 +183,9 @@ import { VeleroUninstallController } from './controllers/velero-uninstall.contro
     DeclaredEngineResolver,
     BackupStatusService,
     PgBackrestService,
+    PgBackrestHaService,
+    PgbackrestPluginInstallerService,
+    DatabaseHaBackupHandoverService,
     PgLegacyRepoRetirer,
     PlaintextRetirementService,
     DestinationPlacementValidator,
