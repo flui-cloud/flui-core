@@ -36,6 +36,7 @@ import {
   storageNodeWarnings,
   volumeCopiesFrom,
 } from '../utils/replicated-volumes.core';
+import { missingVoteWarnings } from '../utils/replicated-votes.core';
 import {
   ClusterHaService,
   notThreeLocations,
@@ -49,6 +50,8 @@ export interface EnableReplicatedVolumesJob {
   sizeGiB: number;
   /** Where the engine's single-copy components run; empty means anywhere away from copies. */
   voteZones?: string[];
+  /** Nodes that hold the tie-breaking vote, with no data: they still need the engine's module. */
+  tieBreakers?: string[];
 }
 
 export interface ReplicatedVolumesView {
@@ -97,6 +100,15 @@ export class ReplicatedVolumesService {
     const storageNodes = storageNodesOf(ha.nodes);
     const storageClass = await this.installer.readStorageClass(ha.kubeconfig);
     const candidates = haCandidatesFrom(ha.nodes);
+    const plan: ReplicatedVolumesFeasibility =
+      ha.state.level === 'three-locations' && ha.topology
+        ? replicatedVolumesFeasibility(candidates, ha.topology, {
+            prepared: storageNodes,
+          })
+        : {
+            feasible: false,
+            reason: notThreeLocations(ha.cluster.name, ha.state),
+          };
     return {
       clusterId,
       enabled: !!storageClass,
@@ -105,18 +117,37 @@ export class ReplicatedVolumesService {
       warnings: [
         ...storageNodeWarnings(candidates, storageNodes),
         ...(storageClass ? await this.copyWarnings(ha.kubeconfig) : []),
+        ...(storageClass && 'tieBreakers' in plan
+          ? await this.voteWarnings(ha.kubeconfig, plan.tieBreakers)
+          : []),
       ],
-      plan:
-        ha.state.level === 'three-locations' && ha.topology
-          ? replicatedVolumesFeasibility(candidates, ha.topology, {
-              prepared: storageNodes,
-            })
-          : {
-              feasible: false,
-              reason: notThreeLocations(ha.cluster.name, ha.state),
-            },
+      plan,
       operation: await this.runningOperation(clusterId),
     };
+  }
+
+  private async voteWarnings(
+    kubeconfig: string,
+    tieBreakers: string[],
+  ): Promise<string[]> {
+    if (!tieBreakers.length) return [];
+    try {
+      return missingVoteWarnings(
+        tieBreakers,
+        await this.kubernetes.execInPod(
+          kubeconfig,
+          PIRAEUS_NAMESPACE,
+          LINSTOR_CONTROLLER_SELECTOR,
+          LINSTOR_CONTROLLER_DEPLOYMENT,
+          ['linstor', '-m', '--output-version', 'v1', 'node', 'list'],
+        ),
+      );
+    } catch (err: any) {
+      this.logger.warn(
+        `[replicated-volumes] engine nodes not read (${err?.message ?? err})`,
+      );
+      return [];
+    }
   }
 
   private async copyWarnings(kubeconfig: string): Promise<string[]> {
@@ -217,6 +248,7 @@ export class ReplicatedVolumesService {
       storageNodes: plan.storageNodes,
       sizeGiB,
       voteZones: voteZonesOf(ha.topology),
+      tieBreakers: 'tieBreakers' in plan ? plan.tieBreakers : [],
     };
     await this.queue.add(REPLICATED_VOLUMES_JOB_ENABLE, job, { attempts: 1 });
     this.logger.log(

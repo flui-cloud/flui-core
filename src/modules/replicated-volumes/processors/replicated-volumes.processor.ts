@@ -61,6 +61,7 @@ export class ReplicatedVolumesProcessor {
       storageNodes,
       sizeGiB,
       voteZones = [],
+      tieBreakers = [],
     } = job.data;
     await this.operations.update(operationId, {
       status: OperationStatus.IN_PROGRESS,
@@ -79,6 +80,14 @@ export class ReplicatedVolumesProcessor {
           await this.preparer.prepare(kubeconfig, node, sizeGiB),
         );
         if (problem) throw new Error(problem);
+      }
+      for (const node of tieBreakers) {
+        const problem = poolProblem(
+          node,
+          await this.preparer.prepareVote(kubeconfig, node),
+        );
+        if (problem)
+          throw new Error(`${problem} It holds the tie-breaking vote.`);
       }
 
       await this.step(operationId, OperationStep.REPLICATED_INSTALL_ENGINE, 40);
