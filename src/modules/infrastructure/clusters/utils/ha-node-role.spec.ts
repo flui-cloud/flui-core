@@ -1,4 +1,9 @@
-import { haRoleMetadata, haRoleOf, k3sRoleOf } from './ha-node-role';
+import {
+  haRoleMetadata,
+  haRoleOf,
+  k3sRoleOf,
+  serverJoinRefusal,
+} from './ha-node-role';
 
 describe('ha-node-role', () => {
   it('reads only the roles Flui records', () => {
@@ -12,6 +17,16 @@ describe('ha-node-role', () => {
     expect(k3sRoleOf('server')).toBe('server');
     expect(k3sRoleOf('data-host')).toBe('agent');
     expect(k3sRoleOf(null)).toBe('agent');
+  });
+
+  it('refuses a server that joined without the control-plane label', () => {
+    const plane = { 'node-role.kubernetes.io/control-plane': 'true' };
+    expect(serverJoinRefusal('w-2', 'server', plane)).toBeNull();
+    expect(serverJoinRefusal('w-2', 'server', {})).toMatch(
+      /w-2 joined as an ordinary worker/,
+    );
+    expect(serverJoinRefusal('w-2', 'server', undefined)).not.toBeNull();
+    expect(serverJoinRefusal('w-2', 'agent', {})).toBeNull();
   });
 
   it('records the role, and nothing for an ordinary worker', () => {

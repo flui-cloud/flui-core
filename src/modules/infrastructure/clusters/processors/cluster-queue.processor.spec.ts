@@ -1,6 +1,7 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 jest.mock('ip-cidr', () => ({}));
 
+import { haJoinOutcome } from '../services/ha-server-join.service';
 import { ClusterQueueProcessor } from './cluster-queue.processor';
 import { ClusterStatus, ClusterType } from '../entities/cluster.entity';
 import {
@@ -70,6 +71,13 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
         .mockResolvedValue({ id: 'node-master', ipAddress: '1.2.3.4' }),
       createWorkerNodes: jest.fn().mockResolvedValue([]),
     };
+    const haServerJoin = {
+      startBuying: jest.fn(async (_c: unknown, plan: unknown) =>
+        plan ? { purchases: Promise.resolve([]) } : null,
+      ),
+      joinBought: jest.fn(),
+      waitForPlatform: jest.fn(),
+    };
     const capabilitiesFactory = {
       getCapabilitiesService: jest.fn().mockReturnValue({
         getStaticCapabilities: jest
@@ -111,6 +119,7 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       clusterRepository,
       operationRepository,
       orchestrationService,
+      haServerJoin,
       capabilitiesFactory,
       clusterDnsZoneService,
       grafanaConfigService,
@@ -131,6 +140,7 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       cluster,
       operation,
       orchestrationService,
+      haServerJoin,
       infraGateway,
       clusterFirewallIntegrationService,
     };
@@ -168,6 +178,99 @@ describe('ClusterQueueProcessor.handleCreateCluster', () => {
       [cluster.id],
       [cluster.id],
     ]);
+  });
+
+  it('buys nothing again when a retried creation finds its cluster destroyed', async () => {
+    const { run, cluster, operation, orchestrationService } = build(0);
+    cluster.status = ClusterStatus.DELETED;
+
+    await run();
+
+    expect(orchestrationService.createMasterNode).not.toHaveBeenCalled();
+    expect(cluster.status).toBe(ClusterStatus.DELETED);
+    expect(operation.status).toBe(OperationStatus.CANCELLED);
+  });
+
+  const PLAN = {
+    region: 'eu-central',
+    first: { zone: 'fsn1', shape: 'cpx22' },
+    servers: [
+      { zone: 'nbg1', shape: 'cpx22' },
+      { zone: 'hel1', shape: 'cpx22' },
+    ],
+    later: [] as string[],
+  };
+
+  it('across three locations: buys the servers with the first, joins them after it, then waits for the install', async () => {
+    const { run, cluster, operation, orchestrationService, haServerJoin } =
+      build(0);
+    operation.metadata.haPlan = PLAN;
+    operation.metadata.operationSteps = getOperationSteps(
+      OperationType.CREATE_CLUSTER,
+      { workerCount: 0, haServers: ['nbg1', 'hel1'] },
+    );
+    const order: string[] = [];
+    haServerJoin.startBuying.mockImplementation(async () => {
+      order.push('buy');
+      return { purchases: Promise.resolve([]) };
+    });
+    orchestrationService.createMasterNode.mockImplementation(async () => {
+      order.push('first');
+      return { id: 'node-master', ipAddress: '1.2.3.4' };
+    });
+    haServerJoin.joinBought.mockImplementation(async () => {
+      order.push('join');
+      return {
+        joined: 2,
+        joinedAt: 'then',
+        missing: [],
+        ...haJoinOutcome(PLAN, ['nbg1', 'hel1'], []),
+      };
+    });
+    haServerJoin.waitForPlatform.mockImplementation(async () => {
+      order.push('install');
+      return { at: 'later', problem: null };
+    });
+
+    await run();
+
+    expect(order).toEqual(['buy', 'first', 'join', 'install']);
+    expect(orchestrationService.createWorkerNodes).not.toHaveBeenCalled();
+    expect(cluster.nodeCount).toBe(3);
+    expect(operation.status).toBe(OperationStatus.COMPLETED);
+    expect(operation.metadata.message).toBe(
+      'Cluster ready across fsn1, nbg1, hel1',
+    );
+    expect(operation.metadata.platformInstalledAt).toBe('later');
+  });
+
+  it('says when the install on the first server stopped', async () => {
+    const { run, operation, haServerJoin } = build(0);
+    const plan = { ...PLAN, servers: [PLAN.servers[0]], later: ['hel1'] };
+    operation.metadata.haPlan = plan;
+    operation.metadata.operationSteps = getOperationSteps(
+      OperationType.CREATE_CLUSTER,
+      { workerCount: 0, haServers: ['nbg1'] },
+    );
+    haServerJoin.joinBought.mockResolvedValue({
+      joined: 1,
+      joinedAt: 'then',
+      missing: ['hel1'],
+      ...haJoinOutcome(plan, ['nbg1'], ['hel1']),
+    });
+    haServerJoin.waitForPlatform.mockResolvedValue({
+      at: null,
+      problem:
+        'The install on the first server stopped before the end (its log is /var/log/k3s-master-init.log)',
+    });
+
+    await run();
+
+    expect(operation.metadata.message).toBe(
+      'Cluster ready in fsn1, nbg1; a server is still missing in hel1: add it from the High availability tab. The install on the first server stopped before the end (its log is /var/log/k3s-master-init.log)',
+    );
+    expect(operation.metadata.missingLocations).toEqual(['hel1']);
+    expect(operation.metadata.platformInstalledAt).toBeNull();
   });
 
   it('takes the single-node path and never calls createWorkerNodes when workerCount is 0', async () => {

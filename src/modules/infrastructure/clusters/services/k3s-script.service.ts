@@ -148,6 +148,24 @@ export interface K3sMasterConfig {
   topology?: NodeTopology | null;
 }
 
+/** Where a worker joins; one bought to join later is told by Flui instead, so its boot script carries no token. */
+function joinEnv(config: K3sWorkerConfig): Record<string, string> {
+  if (config.joinLater) {
+    return {
+      K3S_TOKEN: '',
+      K3S_URL: '',
+      MASTER_IP: '',
+      FLUI_K3S_JOIN: 'later',
+    };
+  }
+  return {
+    K3S_TOKEN: config.k3sToken,
+    K3S_URL: `https://${config.masterIp}:6443`,
+    MASTER_IP: config.masterIp,
+    FLUI_K3S_JOIN: 'now',
+  };
+}
+
 export interface K3sWorkerConfig {
   /**
    * Set on providers whose firewall lives on the host: the ruleset goes into
@@ -161,6 +179,11 @@ export interface K3sWorkerConfig {
   masterIp: string;
   /** `server` joins the control plane and its datastore; absent is an agent, as always. */
   k3sRole?: 'agent' | 'server';
+  /**
+   * Bought before the first server exists: the node prepares itself and waits
+   * for Flui to write where to join, so the boot script carries no token.
+   */
+  joinLater?: boolean;
   k3sVersion?: string;
   instanceId: string;
   instanceName: string;
@@ -502,11 +525,9 @@ export class K3sScriptService {
           CLOUD_PROVIDER: config.provider,
           CLUSTER_ID: config.clusterId,
           CLUSTER_NAME: config.clusterName,
-          K3S_TOKEN: config.k3sToken,
-          K3S_URL: `https://${config.masterIp}:6443`,
+          ...joinEnv(config),
           FLUI_K3S_ROLE: config.k3sRole ?? 'agent',
           K3S_VERSION: config.k3sVersion || K3S_DEFAULT_VERSION,
-          MASTER_IP: config.masterIp,
           FLUI_CA_PUBLIC_KEY: config.caPublicKey || '',
           // Multi-cluster observability
           OBSERVABILITY_CLUSTER_IP: config.controlClusterIp || '',

@@ -25,12 +25,17 @@ import {
   OperationType,
 } from '../../servers/entities/infrastructure-operations.entity';
 import { CreateClusterDto } from '../dto/create-cluster.dto';
+import { HaCreationPlan } from '../utils/ha-creation-plan.core';
+import { HaPlanResponseDto } from '../dto/ha-creation-plan.dto';
+import {
+  HaCreationPlanService,
+  shapeNameVia,
+} from './ha-creation-plan.service';
 import { EncryptionService } from '../../../shared/encryption/services/encryption.service';
 import { ClusterFirewallIntegrationService } from './cluster-firewall-integration.service';
 import { CapabilitiesProviderFactory } from '../../../providers/core/factories/capabilities-provider.factory';
 import { CloudProvider } from '../../../providers/enums/cloud-provider.enum';
 import { ProviderFactory } from '../../../providers/core/factories/provider.factory';
-import { shapeNameOf } from '../../../providers/core/catalogue/shape-name';
 import {
   getFirewallRulesForClusterType,
   sanitizeApiServerFirewallRules,
@@ -54,6 +59,28 @@ import { HostnameMode } from '../../../dns/enums/hostname-mode.enum';
 import { managementNetworkOn } from '../../networking/management-network.state';
 import type { OperationWarning } from '../processors/control-hub-hooks';
 
+/** What a cluster across three locations changes in its creation; nothing for a standard one. */
+function haCreationFacts(plan: HaCreationPlan | null) {
+  if (!plan) {
+    return {
+      firstShape: null,
+      clusterMetadata: {},
+      operationMetadata: {},
+      serverZones: [] as string[],
+      jobTimeoutMs: 1_800_000,
+    };
+  }
+  return {
+    firstShape: plan.first.shape,
+    clusterMetadata: { highAvailability: 'three-locations' },
+    operationMetadata: { haPlan: plan },
+    serverZones: plan.servers.map((s) => s.zone),
+    // Bull does not stop a job past its timeout, it runs a second one beside
+    // it; a cluster across three locations also waits for the install to end.
+    jobTimeoutMs: 3_600_000,
+  };
+}
+
 /**
  * Service responsible for cluster creation logic
  */
@@ -76,6 +103,7 @@ export class ClusterCreationService {
     private readonly managementAddress: ManagementAddressResolver,
     private readonly byosVNetService: ByosVNetService,
     @Optional() private readonly providers?: ProviderFactory,
+    @Optional() private readonly haPlans?: HaCreationPlanService,
   ) {}
 
   /**
@@ -143,6 +171,8 @@ export class ClusterCreationService {
     }
 
     await this.enforceProviderPolicies(dto, clusterType, hasUsableSubnet);
+    const haPlan = (await this.haPlans?.plan(dto)) ?? null;
+    const ha = haCreationFacts(haPlan);
 
     // Resolve nip.io hostname token: when running in IP mode, every cluster gets
     // a unique token segment so the LE domain set differs between recreations,
@@ -170,7 +200,7 @@ export class ClusterCreationService {
       name: dto.name,
       provider: dto.provider,
       region: dto.region,
-      nodeSize: await this.shapeNameFor(dto.provider, dto.nodeSize),
+      nodeSize: await this.clusterNodeSize(dto, ha.firstShape),
       nodeCount: 0, // Will be updated as nodes are created
       minNodes: dto.minNodes,
       maxNodes: dto.maxNodes,
@@ -191,7 +221,7 @@ export class ClusterCreationService {
       // observability gets its own dedicated topology.
       sharedStorageEnabled: dto.sharedStorageEnabled !== false,
       sharedStorageVolumeSizeGb: dto.sharedStorageVolumeSizeGb ?? 20,
-      metadata,
+      metadata: { ...metadata, ...ha.clusterMetadata },
     });
 
     const savedCluster = await this.clusterRepository.save(cluster);
@@ -274,6 +304,7 @@ export class ClusterCreationService {
     const operationSteps = getOperationSteps(OperationType.CREATE_CLUSTER, {
       workerCount,
       withFirewall,
+      haServers: ha.serverZones,
     });
 
     // Create operation for tracking
@@ -289,10 +320,13 @@ export class ClusterCreationService {
       currentStepProgress: 0,
       metadata: {
         clusterConfig: dto,
-        estimatedDurationInSeconds: estimateCreateDurationSeconds(workerCount),
+        estimatedDurationInSeconds: estimateCreateDurationSeconds(
+          workerCount + ha.serverZones.length,
+        ),
         providerFirewallId, // Single firewall ID (not array) — null when deferred
         operationSteps: operationSteps, // Fixed: was 'steps', now 'operationSteps'
         desiredFirewallRules: firewallDeferred ? desiredRules : undefined,
+        ...ha.operationMetadata,
         ...(warnings.length ? { warnings } : {}),
       },
     });
@@ -311,7 +345,7 @@ export class ClusterCreationService {
         type: 'exponential',
         delay: 2000,
       },
-      timeout: 1800000, // 30 minutes
+      timeout: ha.jobTimeoutMs,
     });
 
     this.logger.log(
@@ -352,25 +386,26 @@ export class ClusterCreationService {
     );
   }
 
-  /**
-   * The size as the provider's catalogue names it: a client may send the id
-   * (`109` on Hetzner), and every later reader — the scaling group, the node
-   * list, billing — expects the name. Unchanged when the catalogue is unread.
-   */
+  /** The first server's size; a cluster across three locations names it in its plan. */
+  private async clusterNodeSize(
+    dto: CreateClusterDto,
+    planned: string | null,
+  ): Promise<string> {
+    return planned ?? this.shapeNameFor(dto.provider, dto.nodeSize);
+  }
+
   private async shapeNameFor(
     provider: string,
     nodeSize: string,
   ): Promise<string> {
-    if (!nodeSize) return nodeSize;
-    try {
-      const service = this.providers?.getProvider(provider as CloudProvider);
-      return shapeNameOf(
-        nodeSize,
-        (await service?.getNodeSizes?.(false)) ?? [],
-      );
-    } catch {
-      return nodeSize;
-    }
+    return shapeNameVia(this.providers, provider, nodeSize);
+  }
+
+  /** What creating a cluster across three locations would buy now, without buying it. */
+  async previewHighAvailability(
+    query: Parameters<HaCreationPlanService['preview']>[0],
+  ): Promise<HaPlanResponseDto> {
+    return this.haPlans!.preview(query);
   }
 
   /** Whether this provider leaves Flui to build the private network. */

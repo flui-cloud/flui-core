@@ -51,6 +51,22 @@ describe('the topology a bootstrap script hands the node', () => {
     expect(script).toContain("export FLUI_NODE_REGION=''");
   });
 
+  it('carries no token and no master for a server bought to join later', async () => {
+    const script = await new K3sScriptService().generateWorkerScript({
+      ...worker,
+      k3sRole: 'server',
+      joinLater: true,
+    });
+    expect(script).toContain("export FLUI_K3S_JOIN='later'");
+    expect(script).toContain("export K3S_TOKEN=''");
+    expect(script).toContain("export K3S_URL=''");
+    expect(script).toContain("export MASTER_IP=''");
+    expect(script).not.toContain('token');
+    expect(await new K3sScriptService().generateWorkerScript(worker)).toContain(
+      "export FLUI_K3S_JOIN='now'",
+    );
+  });
+
   it('joins a server to the control plane only when asked, an agent otherwise', async () => {
     const service = new K3sScriptService();
     expect(

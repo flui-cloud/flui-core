@@ -126,6 +126,7 @@ import {
   assertWritableClusterMetadata,
   assertWritableNodeMetadata,
 } from './utils/writable-metadata.util';
+import { HaPlanResponseDto } from './dto/ha-creation-plan.dto';
 
 export const CLUSTER_ACCESS_NEEDS_DATA_ACCESS =
   'Your own SSH keys or OS image on a new cluster give a shell on its nodes, ' +
@@ -233,6 +234,41 @@ export class ClustersController {
     @Param('provider') provider: CloudProvider,
   ): Promise<WorkloadProviderResponseDto> {
     return this.clusterCreationService.workloadProviderVerdict(provider);
+  }
+
+  @Get('high-availability/plan')
+  @RequireSection('infrastructure')
+  @ApiOperation({
+    summary: 'What a cluster across three locations would be bought as',
+    description:
+      "Buys nothing. For a provider and the first server's location: the three " +
+      'servers with their size and role, each location taking the first of ' +
+      '`shapes` it has available now, or why it cannot be created, with the ' +
+      'sizes every location has. Creating the cluster gives the same answer.',
+  })
+  @ApiQuery({ name: 'provider', enum: CloudProvider })
+  @ApiQuery({ name: 'region', description: "The first server's location." })
+  @ApiQuery({
+    name: 'shapes',
+    description: 'Sizes in order of preference, comma separated.',
+  })
+  @ApiQuery({ name: 'completeLater', required: false, type: Boolean })
+  @ApiResponse({ status: 200, type: HaPlanResponseDto })
+  async highAvailabilityPlan(
+    @Query('provider') provider: CloudProvider,
+    @Query('region') region: string,
+    @Query('shapes') shapes: string,
+    @Query('completeLater') completeLater?: string,
+  ): Promise<HaPlanResponseDto> {
+    return this.clusterCreationService.previewHighAvailability({
+      provider,
+      region,
+      shapes: (shapes ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      completeLater: completeLater === 'true',
+    });
   }
 
   @Get('orphan-volumes')

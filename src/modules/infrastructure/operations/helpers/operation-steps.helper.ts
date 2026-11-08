@@ -40,6 +40,105 @@ export function estimateCreateDurationSeconds(workerCount = 0): number {
   );
 }
 
+/** The steps of a cluster's creation: single node, with workers, or across three locations. */
+function createClusterSteps(
+  context?: Record<string, any>,
+): OperationStepConfig[] {
+  const workerCount = context?.workerCount || 0;
+  const haServers: string[] = context?.haServers ?? [];
+
+  if (haServers.length) {
+    return [
+      {
+        step: OperationStep.CLUSTER_CREATE_INIT,
+        description: 'Initializing cluster creation',
+        weight: 5,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_MASTER,
+        description:
+          'Buying the servers for every location; the first one starts the cluster',
+        weight: 40,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
+        description: 'Fetching kubeconfig from the first server',
+        weight: 5,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_WORKERS,
+        description: `Joining the servers in ${haServers.join(' and ')}, one at a time`,
+        weight: 30,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_FINALIZING,
+        description: 'Waiting for Flui to finish installing, then finalizing',
+        weight: 20,
+      },
+    ];
+  }
+
+  // The master step owns the whole bootstrap — server create, cloud-init,
+  // k3s, and the kubeconfig fetch all happen inside createMasterNode. The
+  // kubeconfig step that follows only marks what already happened (~25ms),
+  // so it is weighted as the formality it is; the 30 it used to carry made
+  // the bar jump a third of its length in a single frame.
+  if (workerCount === 0) {
+    // Single-node cluster (no workers)
+    return [
+      {
+        step: OperationStep.CLUSTER_CREATE_INIT,
+        description: 'Initializing cluster creation',
+        weight: 5,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_MASTER,
+        description: 'Creating master node and waiting for K3s',
+        weight: 80,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
+        description: 'Fetching kubeconfig from master node',
+        weight: 5,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_FINALIZING,
+        description: 'Finalizing cluster setup',
+        weight: 10,
+      },
+    ];
+  } else {
+    // Multi-node cluster (with workers)
+    return [
+      {
+        step: OperationStep.CLUSTER_CREATE_INIT,
+        description: 'Initializing cluster creation',
+        weight: 5,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_MASTER,
+        description: 'Creating master node and waiting for K3s',
+        weight: 35,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
+        description: 'Fetching kubeconfig from master node',
+        weight: 5,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_WORKERS,
+        description: `Creating ${workerCount} worker node${workerCount > 1 ? 's' : ''}`,
+        weight: 45,
+      },
+      {
+        step: OperationStep.CLUSTER_CREATE_FINALIZING,
+        description: 'Finalizing cluster setup',
+        weight: 10,
+      },
+    ];
+  }
+}
+
 /**
  * Generate step configuration dynamically based on operation context
  * This allows steps to adapt to different scenarios (e.g., single-node vs multi-node clusters)
@@ -49,69 +148,8 @@ export function getOperationSteps(
   context?: Record<string, any>,
 ): OperationStepConfig[] {
   switch (operationType) {
-    case OperationType.CREATE_CLUSTER: {
-      const workerCount = context?.workerCount || 0;
-
-      // The master step owns the whole bootstrap — server create, cloud-init,
-      // k3s, and the kubeconfig fetch all happen inside createMasterNode. The
-      // kubeconfig step that follows only marks what already happened (~25ms),
-      // so it is weighted as the formality it is; the 30 it used to carry made
-      // the bar jump a third of its length in a single frame.
-      if (workerCount === 0) {
-        // Single-node cluster (no workers)
-        return [
-          {
-            step: OperationStep.CLUSTER_CREATE_INIT,
-            description: 'Initializing cluster creation',
-            weight: 5,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_MASTER,
-            description: 'Creating master node and waiting for K3s',
-            weight: 80,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
-            description: 'Fetching kubeconfig from master node',
-            weight: 5,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_FINALIZING,
-            description: 'Finalizing cluster setup',
-            weight: 10,
-          },
-        ];
-      } else {
-        // Multi-node cluster (with workers)
-        return [
-          {
-            step: OperationStep.CLUSTER_CREATE_INIT,
-            description: 'Initializing cluster creation',
-            weight: 5,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_MASTER,
-            description: 'Creating master node and waiting for K3s',
-            weight: 35,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_KUBECONFIG,
-            description: 'Fetching kubeconfig from master node',
-            weight: 5,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_WORKERS,
-            description: `Creating ${workerCount} worker node${workerCount > 1 ? 's' : ''}`,
-            weight: 45,
-          },
-          {
-            step: OperationStep.CLUSTER_CREATE_FINALIZING,
-            description: 'Finalizing cluster setup',
-            weight: 10,
-          },
-        ];
-      }
-    }
+    case OperationType.CREATE_CLUSTER:
+      return createClusterSteps(context);
 
     case OperationType.REINSTALL_CLUSTER: {
       return [
