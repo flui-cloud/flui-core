@@ -44,6 +44,8 @@ describe('replicated-votes.core', () => {
     it('installs the headers the vote needs, and nothing that holds data', () => {
       const script = replicatedVoteHostScript();
       expect(script).toContain('linux-headers-$KREL');
+      expect(script).toContain('KFLAVOUR="linux-headers-${KREL##*-}"');
+      expect(script).toContain('! dpkg -s "$KFLAVOUR"');
       expect(script).toContain('echo "HEADERS $KREL"');
       expect(script).not.toMatch(/vgcreate|fallocate|losetup/);
     });

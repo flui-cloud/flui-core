@@ -87,7 +87,7 @@ export class ClusterHaService {
 
   /**
    * Databases and volumes are made highly available only on a cluster that
-   * already survives the loss of a location: two copies of data are no use
+   * already survives the loss of a location: copies of data are no use
    * if the one server that would move the application to them is lost.
    */
   async requireThreeLocations(

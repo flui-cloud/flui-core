@@ -97,7 +97,7 @@ export class HaCreationPlanService {
     shapes: string[];
     completeLater: boolean;
   }): Promise<HaPlanResponseDto> {
-    const { answer, dataZones } = await this.answer({
+    const { answer, dataZones, measured } = await this.answer({
       ...query,
       workerCount: 0,
     });
@@ -109,6 +109,7 @@ export class HaCreationPlanService {
         refusal: answer.refusal,
         completeLaterHelps: answer.completeLaterHelps === true,
         region: null,
+        measured,
         servers: [],
         later: [],
       };
@@ -121,6 +122,7 @@ export class HaCreationPlanService {
       refusal: null,
       completeLaterHelps: false,
       region: answer.plan.region,
+      measured,
       servers: [
         {
           ...answer.plan.first,
@@ -143,11 +145,16 @@ export class HaCreationPlanService {
     shapes: string[];
     completeLater: boolean;
     workerCount: number;
-  }): Promise<{ answer: HaCreationAnswer; dataZones: string[] }> {
+  }): Promise<{
+    answer: HaCreationAnswer;
+    dataZones: string[];
+    measured: boolean;
+  }> {
     const capabilities = this.capabilitiesFactory.getCapabilitiesService(
       input.provider,
     );
-    const region = capabilities.nodeTopology(input.region)?.region;
+    const where = capabilities.nodeTopology(input.region);
+    const region = where?.region;
     const resolution = resolveHaTopology(
       capabilities.haTopologies(),
       region,
@@ -162,12 +169,16 @@ export class HaCreationPlanService {
     const answer = planHaCreation({
       topology: resolution.topology,
       unsupported: unsupportedReason(region, resolution),
-      firstZone: input.region,
+      firstZone: where?.zone ?? input.region,
       workerCount: input.workerCount,
       shapes,
       catalogue: catalogue ?? [],
       completeLater: input.completeLater,
     });
-    return { answer, dataZones: resolution.topology?.dataZones ?? [] };
+    return {
+      answer,
+      dataZones: resolution.topology?.dataZones ?? [],
+      measured: resolution.topology?.measured ?? true,
+    };
   }
 }

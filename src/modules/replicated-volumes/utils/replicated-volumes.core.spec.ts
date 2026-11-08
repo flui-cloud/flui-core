@@ -11,6 +11,7 @@ import {
   staleCopyWarnings,
   volumeCopiesFrom,
   voteZonesOf,
+  stuckSatellites,
 } from './replicated-volumes.core';
 import { HaTopology } from '../../providers/core/ha-topology';
 
@@ -19,6 +20,7 @@ const hetzner: HaTopology = {
   zones: ['fsn1', 'nbg1', 'hel1'],
   dataZones: ['fsn1', 'nbg1'],
   validated: true,
+  measured: true,
 };
 
 const node = (name: string, zone?: string, schedulable = true) => ({
@@ -58,6 +60,15 @@ describe('replicated volumes core', () => {
       );
     });
 
+    it('keeps one copy per location for data', () => {
+      const three = renderReplicatedStorageClass(3) as {
+        parameters: Record<string, string>;
+      };
+      expect(three.parameters['linstor.csi.linbit.com/placementCount']).toBe(
+        '3',
+      );
+    });
+
     it('keeps each copy, and the tie-breaker, in a location of its own', () => {
       expect(sc.parameters['linstor.csi.linbit.com/replicasOnDifferent']).toBe(
         'Aux/topology/topology.kubernetes.io/zone',
@@ -92,16 +103,19 @@ describe('replicated volumes core', () => {
   });
 
   it('keeps the single-copy engine components off the nodes that hold data', () => {
-    const cluster = renderLinstorCluster() as { spec: Record<string, any> };
+    const cluster = renderLinstorCluster(['hel1']) as {
+      spec: Record<string, any>;
+    };
     for (const part of ['controller', 'csiController', 'affinityController']) {
       const spec = cluster.spec[part].podTemplate.spec;
       expect(
         spec.affinity.nodeAffinity
           .requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0]
           .matchExpressions,
-      ).toEqual([
-        { key: 'flui.cloud/replicated-storage', operator: 'DoesNotExist' },
-      ]);
+      ).toContainEqual({
+        key: 'flui.cloud/replicated-storage',
+        operator: 'DoesNotExist',
+      });
       expect(spec.tolerations).toEqual([
         { operator: 'Exists', effect: 'NoSchedule' },
       ]);
@@ -188,8 +202,8 @@ describe('replicated volumes core', () => {
       const r = replicatedVolumesFeasibility(lab, hetzner, {
         requested: ['master', 'w2'],
       });
-      expect((r as { reason: string }).reason).toContain(
-        'two different locations',
+      expect((r as { reason: string }).reason).toBe(
+        'Name 2 nodes, one in each location for data: fsn1 and nbg1.',
       );
     });
 
@@ -214,6 +228,45 @@ describe('replicated volumes core', () => {
         requested: ['w1', 'nope'],
       });
       expect((r as { reason: string }).reason).toContain('nope');
+    });
+
+    describe('where every location holds data', () => {
+      const milan: HaTopology = {
+        region: 'eu-south',
+        zones: ['a', 'b', 'c'],
+        dataZones: ['a', 'b', 'c'],
+        validated: true,
+        measured: true,
+      };
+      const servers = [node('s1', 'a'), node('s2', 'b'), node('s3', 'c')];
+
+      it('puts a copy in each of the three, with no vote to cast', () => {
+        expect(replicatedVolumesFeasibility(servers, milan)).toEqual({
+          feasible: true,
+          zones: ['a', 'b', 'c'],
+          storageNodes: ['s1', 's2', 's3'],
+          tieBreakers: [],
+        });
+      });
+
+      it('refuses when one of them has no node that takes applications', () => {
+        const r = replicatedVolumesFeasibility(
+          [node('s1', 'a'), node('s2', 'b'), node('s3', 'c', false)],
+          milan,
+        );
+        expect((r as { reason: string }).reason).toBe(
+          'Replicated volumes need a node that takes applications in a, b and c.',
+        );
+      });
+
+      it('refuses naming fewer nodes than locations', () => {
+        const r = replicatedVolumesFeasibility(servers, milan, {
+          requested: ['s1', 's2'],
+        });
+        expect((r as { reason: string }).reason).toBe(
+          'Name 3 nodes, one in each location for data: a, b and c.',
+        );
+      });
     });
   });
 
@@ -329,6 +382,7 @@ describe('where the engine runs its single-copy parts', () => {
     zones: ['fsn1', 'nbg1', 'hel1'],
     dataZones: ['fsn1', 'nbg1'],
     validated: true,
+    measured: true,
   };
 
   it('keeps them in the voting location, away from copies', () => {
@@ -350,16 +404,35 @@ describe('where the engine runs its single-copy parts', () => {
     }
   });
 
-  it('only away from copies on a forced region, where no location only votes', () => {
+  it('only prefers a node without copies where every location holds data', () => {
     expect(
-      voteZonesOf({ ...topology, dataZones: topology.zones, validated: false }),
+      voteZonesOf({
+        ...topology,
+        dataZones: topology.zones,
+        validated: false,
+        measured: false,
+      }),
     ).toEqual([]);
     const spec = renderLinstorCluster([]).spec as any;
-    expect(
-      spec.controller.podTemplate.spec.affinity.nodeAffinity
-        .requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0]
-        .matchExpressions,
-    ).toHaveLength(1);
+    for (const part of ['controller', 'csiController', 'affinityController']) {
+      const affinity = spec[part].podTemplate.spec.affinity.nodeAffinity;
+      expect(
+        affinity.requiredDuringSchedulingIgnoredDuringExecution,
+      ).toBeUndefined();
+      expect(affinity.preferredDuringSchedulingIgnoredDuringExecution).toEqual([
+        {
+          weight: 100,
+          preference: {
+            matchExpressions: [
+              {
+                key: 'flui.cloud/replicated-storage',
+                operator: 'DoesNotExist',
+              },
+            ],
+          },
+        },
+      ]);
+    }
   });
 });
 
@@ -381,5 +454,31 @@ describe('the space for copies on a node', () => {
     expect(
       parseReplicatedPoolOutput('NOALLOC\nPOOL flui-replicated 20'),
     ).toEqual({ kind: 'no-alloc' });
+  });
+});
+
+describe('satellites that wait out a crash backoff', () => {
+  const pod = (name: string, node: string, waiting?: string) => ({
+    metadata: { name },
+    spec: { nodeName: node },
+    status: {
+      initContainerStatuses: [
+        { state: waiting ? { waiting: { reason: waiting } } : {} },
+      ],
+    },
+  });
+
+  it('names only the ones backing off on the nodes just prepared, never one still starting', () => {
+    expect(
+      stuckSatellites(
+        [
+          pod('linstor-satellite.hel1-abc', 'w2', 'CrashLoopBackOff'),
+          pod('linstor-satellite.nbg1-xyz', 'w1', 'PodInitializing'),
+          pod('linstor-satellite.fsn1-def', 'master'),
+          pod('linstor-satellite.other-ghi', 'w9', 'CrashLoopBackOff'),
+        ],
+        ['master', 'w1', 'w2'],
+      ),
+    ).toEqual(['linstor-satellite.hel1-abc']);
   });
 });

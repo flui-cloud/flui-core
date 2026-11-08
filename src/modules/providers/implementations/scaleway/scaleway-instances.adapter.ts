@@ -45,6 +45,9 @@ export const INSTANCE_ZONES: CreateServerZoneEnum[] = [
   CreateServerZoneEnum.PlWaw2,
   CreateServerZoneEnum.PlWaw3,
   CreateServerZoneEnum.ItMil1,
+  // The generated client predates Milan's second and third zones; Scaleway's own SDK lists them.
+  'it-mil-2' as CreateServerZoneEnum,
+  'it-mil-3' as CreateServerZoneEnum,
 ];
 
 export interface ScalewayInstanceServerType

@@ -21,13 +21,31 @@ interface ReplicatedVolumesView {
   operation: { id: string; status: string } | null;
 }
 
+function listOf(items: string[]): string {
+  return items.length < 2
+    ? items.join('')
+    : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+}
+
+function enablingWould(plan: {
+  zones: string[];
+  storageNodes: string[];
+  tieBreakers: string[];
+}): string {
+  const vote = plan.tieBreakers.length
+    ? `, with ${listOf(plan.tieBreakers)} for the tie-breaking vote`
+    : ', one in each location, with no vote needed';
+  return `Enabling would keep copies on ${listOf(plan.storageNodes)} (${listOf(plan.zones)})${vote}.`;
+}
+
 export default class ClusterReplicatedVolumes extends Command {
   static readonly description =
     'Show whether a cluster offers replicated volumes, or turn them on.\n' +
-    'A replicated volume keeps a synchronous copy in a second location, so an\n' +
-    'application with one writer comes back there, with its data, when its\n' +
-    'server or its location is lost; the third location only votes. The\n' +
-    'cluster must be highly available across three locations (flui cluster ha).\n' +
+    'A replicated volume keeps a synchronous copy in each location for data,\n' +
+    'so an application with one writer comes back in another of them, with\n' +
+    'its data, when its server or its location is lost. Where only two\n' +
+    'locations hold data, the third only votes. The cluster must be highly\n' +
+    'available across three locations (flui cluster ha).\n' +
     'With --enable, a node in each location for data sets aside disk space and\n' +
     'the volume engine is installed; existing volumes do not change.\n' +
     'Applications ask for it per volume with replicated: true in flui.yaml.';
@@ -52,7 +70,7 @@ export default class ClusterReplicatedVolumes extends Command {
     }),
     nodes: Flags.string({
       description:
-        'The two nodes that hold the copies, comma separated, one in each location for data (default: Flui picks them)',
+        'The nodes that hold the copies, comma separated, one in each location for data (default: Flui picks them)',
     }),
     size: Flags.integer({
       min: 5,
@@ -98,7 +116,7 @@ export default class ClusterReplicatedVolumes extends Command {
       }
       this.log('');
       this.log(
-        `   ${chalk.bold(args.cluster)}: enabling replicated volumes on ${started.storageNodes.join(' and ')} (${started.sizeGiB} GiB each)`,
+        `   ${chalk.bold(args.cluster)}: enabling replicated volumes on ${listOf(started.storageNodes)} (${started.sizeGiB} GiB each)`,
       );
       this.log(`   Operation ${started.operationId}`);
       this.log(
@@ -123,17 +141,15 @@ export default class ClusterReplicatedVolumes extends Command {
       );
     } else if (view.enabled) {
       this.log(
-        `   ${chalk.green('Replicated volumes on')}: copies on ${view.storageNodes.join(' and ')}`,
+        `   ${chalk.green('Replicated volumes on')}: copies on ${listOf(view.storageNodes)}`,
       );
       this.log(
         chalk.dim(
-          '   A volume asks for it with replicated: true in flui.yaml. An application moves to the other copy only if every volume it mounts is replicated.',
+          '   A volume asks for it with replicated: true in flui.yaml. An application moves to another copy only if every volume it mounts is replicated.',
         ),
       );
     } else if (view.plan.feasible) {
-      this.log(
-        `   Off. Enabling would keep copies on ${view.plan.storageNodes.join(' and ')} (${view.plan.zones.join(', ')}), with ${view.plan.tieBreakers.join(', ')} for the tie-breaking vote.`,
-      );
+      this.log(`   Off. ${enablingWould(view.plan)}`);
       this.log(
         chalk.dim(
           `   Turn it on: flui cluster replicated-volumes ${args.cluster} --enable`,

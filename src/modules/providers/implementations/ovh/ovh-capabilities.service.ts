@@ -17,7 +17,11 @@ import {
 } from '../../../management/entities/credentials.entity';
 import { ValidationResultDto } from '../../../management/dto/validation-result.dto';
 import { buildOvhOpenStackClient } from './ovh-openstack-client.factory';
-import { ovhRegionCode, ovhRegionMeta } from './ovh-region-metadata';
+import {
+  ovhNodeTopology,
+  ovhRegionCode,
+  ovhRegionMeta,
+} from './ovh-region-metadata';
 import { ICredentialProvider } from '../../interfaces/credential-provider.interface';
 import { CloudProvider } from '../../enums/cloud-provider.enum';
 import { NodeTopology } from '../../core/node-topology';
@@ -198,12 +202,23 @@ export class OvhCapabilitiesService implements IProviderCapabilitiesService {
     return this.inner.getLogoContentType();
   }
 
+  /**
+   * OVHcloud's regions with three availability zones, measured by Flui's own
+   * bench: a round trip under 1.2 ms between any two zones, so every zone
+   * holds a copy of the data.
+   */
   haTopologies(): HaTopology[] {
-    return [];
+    return ['eu-west-par', 'eu-south-mil'].map((region) => ({
+      region,
+      zones: [`${region}-a`, `${region}-b`, `${region}-c`],
+      dataZones: [`${region}-a`, `${region}-b`, `${region}-c`],
+      validated: true,
+      measured: true,
+    }));
   }
 
-  nodeTopology(): NodeTopology | null {
-    return null;
+  nodeTopology(location: string | null | undefined): NodeTopology | null {
+    return ovhNodeTopology(location);
   }
 
   getStaticCapabilities(): ProviderCapabilities {

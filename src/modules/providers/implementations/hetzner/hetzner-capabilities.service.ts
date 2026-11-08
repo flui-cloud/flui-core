@@ -207,6 +207,7 @@ export class HetznerCapabilitiesService
         zones: ['fsn1', 'nbg1', 'hel1'],
         dataZones: ['fsn1', 'nbg1'],
         validated: true,
+        measured: true,
       },
     ];
   }

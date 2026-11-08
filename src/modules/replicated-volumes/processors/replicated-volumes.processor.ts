@@ -93,10 +93,14 @@ export class ReplicatedVolumesProcessor {
       await this.step(operationId, OperationStep.REPLICATED_INSTALL_ENGINE, 40);
       await this.installer.ensureOperator(kubeconfig);
       await this.installer.ensureCluster(kubeconfig, voteZones);
+      await this.installer.restartStuckSatellites(kubeconfig, [
+        ...storageNodes,
+        ...tieBreakers,
+      ]);
       await this.installer.moveControlOffCopies(kubeconfig, storageNodes);
 
       await this.step(operationId, OperationStep.REPLICATED_STORAGE_CLASS, 90);
-      await this.installer.ensureStorageClass(kubeconfig);
+      await this.installer.ensureStorageClass(kubeconfig, storageNodes.length);
 
       await this.operations.update(operationId, {
         status: OperationStatus.COMPLETED,

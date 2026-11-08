@@ -194,7 +194,7 @@ export class ReplicatedVolumesService {
 
   /**
    * Checks what can be checked before anything is installed, so a cluster
-   * that cannot hold two copies and a tie-breaker is refused with the reason,
+   * that cannot hold a copy in each location for data is refused with the reason,
    * then hands the work to the queue.
    */
   async enable(

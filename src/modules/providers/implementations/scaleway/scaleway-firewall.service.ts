@@ -34,6 +34,10 @@ type ScalewayFirewallId = { zone: string; sgId: string };
 type ScalewayResourceId = { zone: string; serverId: string };
 
 import { toScalewayZone } from './scaleway-zone.util';
+import {
+  ScalewayZoneSecurityGroups,
+  isZoneCopy,
+} from './scaleway-zone-security-groups';
 @Injectable()
 export class ScalewayFirewallService implements IFirewallProvider {
   private readonly logger = new Logger(ScalewayFirewallService.name);
@@ -44,7 +48,11 @@ export class ScalewayFirewallService implements IFirewallProvider {
     private readonly labelService: LabelService,
     private readonly instancesAdapter: ScalewayInstancesAdapter,
     private readonly iamAdapter: ScalewayIamAdapter,
-  ) {}
+  ) {
+    this.zoneCopies = new ScalewayZoneSecurityGroups(instancesAdapter);
+  }
+
+  private readonly zoneCopies: ScalewayZoneSecurityGroups;
 
   // ─── ID helpers ────────────────────────────────────────────────────────────
 
@@ -475,7 +483,7 @@ export class ScalewayFirewallService implements IFirewallProvider {
         }
       }
 
-      let filtered = allSgs;
+      let filtered = allSgs.filter((sg) => !isZoneCopy(sg.tags));
 
       if (filters?.name) {
         filtered = filtered.filter((sg) => sg.name === filters.name);
@@ -530,12 +538,17 @@ export class ScalewayFirewallService implements IFirewallProvider {
       CloudProvider.SCALEWAY,
     );
     const scRules = this.fluiRulesToScaleway(rules);
-    await this.instancesAdapter.setSecurityGroupRules(
-      token,
-      parsed.zone,
-      parsed.sgId,
-      scRules,
-    );
+    for (const group of [
+      parsed,
+      ...(await this.zoneCopies.copies(token, parsed)),
+    ]) {
+      await this.instancesAdapter.setSecurityGroupRules(
+        token,
+        group.zone,
+        group.sgId,
+        scRules,
+      );
+    }
   }
 
   async deleteFirewall(firewallId: string): Promise<void> {
@@ -550,6 +563,13 @@ export class ScalewayFirewallService implements IFirewallProvider {
       const token = await this.credentialProvider.getActiveApiToken(
         CloudProvider.SCALEWAY,
       );
+      for (const copy of await this.zoneCopies.copies(token, parsed)) {
+        await this.instancesAdapter.deleteSecurityGroup(
+          token,
+          copy.zone,
+          copy.sgId,
+        );
+      }
       await this.instancesAdapter.deleteSecurityGroup(
         token,
         parsed.zone,
@@ -593,7 +613,7 @@ export class ScalewayFirewallService implements IFirewallProvider {
           token,
           parsed.zone,
           parsed.serverId,
-          parsedFw.sgId,
+          await this.zoneCopies.inZone(token, parsedFw, parsed.zone),
         );
       } catch (err) {
         this.logger.error(

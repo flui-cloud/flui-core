@@ -35,6 +35,10 @@ import { ICredentialProvider } from '../../interfaces/credential-provider.interf
 import { buildOvhOpenStackClient } from './ovh-openstack-client.factory';
 import { getOvhNodeSizesFromNova, FlavorPricing } from './ovh-nova-flavors';
 import { FluiOpenStackClient } from './openstack-volumes-client';
+import {
+  ovhAvailabilityZone,
+  ovhComputeRegionFor,
+} from './ovh-region-metadata';
 
 /**
  * GPU flavors are real, orderable OVH products (@flui-cloud/infra's catalog
@@ -79,7 +83,8 @@ function isOvhGpuFlavor(id: string): boolean {
  *
  * `use-routes: false` is the reason this is a separate file rather than a
  * plain `dhcp4: true`: the VNet's DHCP would otherwise install a second
- * default route and blackhole egress.
+ * default route and blackhole egress. `use-dns: false` because the DNS
+ * servers that DHCP hands out may not answer, and pods then fail lookups.
  *
  * `netplan apply` reconfigures every link, not just the one whose file
  * changed, so the public interface loses its lease and its default route for
@@ -157,6 +162,7 @@ network:
       dhcp4: true
       dhcp4-overrides:
         use-routes: false
+        use-dns: false
       accept-ra: false
       optional: true
 FLUI_NETPLAN_EOF
@@ -440,7 +446,10 @@ export class OvhProviderService implements ICloudProvider {
   ): Promise<ServerCreationResult> {
     const client = await this.client();
     const svc = new InfraOvhProviderService(this.configService, client);
-    const region = await client.resolveComputeRegion(config.location);
+    const zone = ovhAvailabilityZone(config.location) ?? undefined;
+    const region = await client.resolveComputeRegion(
+      ovhComputeRegionFor(config.location),
+    );
 
     // Attaching a private VNet alongside Ext-Net at create time left the
     // instance stuck in BUILD with no IP ever assigned (OVH's own docs frame
@@ -548,6 +557,7 @@ export class OvhProviderService implements ICloudProvider {
             name: vol.name,
             sizeGb: vol.sizeGb,
             metadata,
+            availabilityZone: zone,
           });
           await client.waitForVolumeAvailable(region, created.id);
           const attachment = await client.attachVolumeToServer(

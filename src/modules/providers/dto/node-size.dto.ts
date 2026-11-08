@@ -36,6 +36,11 @@ export class NodeSizeLocationAvailabilityDto {
    * it behaves exactly as before.
    */
   availabilityKnown?: boolean;
+  /**
+   * The availability zones of the location that sell this size, where the
+   * provider says so per zone. Absent when it does not: every zone may.
+   */
+  zones?: string[];
 }
 
 export class NodeSizeDto {

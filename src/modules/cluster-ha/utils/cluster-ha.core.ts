@@ -2,12 +2,12 @@ import {
   TOPOLOGY_REGION_LABEL,
   TOPOLOGY_ZONE_LABEL,
 } from '../../providers/core/node-topology';
-import { HaTopologyResolution } from '../../providers/core/ha-topology';
+import {
+  HaTopologyResolution,
+  locationList,
+} from '../../providers/core/ha-topology';
 
 const CONTROL_PLANE_LABEL = 'node-role.kubernetes.io/control-plane';
-
-/** Copies of data are two, each in its own location. */
-const DATA_COPIES = 2;
 
 export type ClusterHaLevel = 'standard' | 'three-locations';
 
@@ -144,6 +144,10 @@ export function clusterHaState(
     warnings.push(
       'This layout was forced: Flui has not measured how far apart these locations are.',
     );
+  } else if (!topology.measured) {
+    warnings.push(
+      `The provider declares ${locationList(topology.zones)} as zones of one region, close together; Flui has not measured them yet.`,
+    );
   }
   const zones: ClusterHaZone[] = topology.zones.map((zone) => ({
     zone,
@@ -166,14 +170,14 @@ export function clusterHaState(
   const dataZonesWithHosts = zones.filter(
     (z) => z.role === 'data' && z.dataHosts.length > 0,
   );
-  if (dataZonesWithHosts.length < DATA_COPIES) {
+  if (dataZonesWithHosts.length < topology.dataZones.length) {
     for (const z of zones.filter(
       (z) => z.role === 'data' && z.dataHosts.length === 0,
     )) {
       missing.push({
         role: 'data-host',
         zone: z.zone,
-        why: `Copies of data live in ${topology.dataZones.join(' and ')}, one in each, on a node that takes applications.`,
+        why: `Copies of data live in ${locationList(topology.dataZones)}, one in each, on a node that takes applications.`,
       });
     }
   }

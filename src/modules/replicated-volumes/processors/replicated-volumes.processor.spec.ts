@@ -20,6 +20,7 @@ describe('ReplicatedVolumesProcessor.enable', () => {
     const installer = {
       ensureOperator: jest.fn(async () => order.push('engine')),
       ensureCluster: jest.fn(),
+      restartStuckSatellites: jest.fn(),
       moveControlOffCopies: jest.fn(),
       ensureStorageClass: jest.fn(),
     };
@@ -49,9 +50,15 @@ describe('ReplicatedVolumesProcessor.enable', () => {
   }
 
   it('prepares the node that votes as well, before installing the engine', async () => {
-    const { run, order, operations } = build({ kind: 'ready' });
+    const { run, order, operations, installer } = build({ kind: 'ready' });
 
     await run();
+
+    expect(installer.ensureStorageClass).toHaveBeenCalledWith('kubeconfig', 2);
+    expect(installer.restartStuckSatellites).toHaveBeenCalledWith(
+      'kubeconfig',
+      ['ha-hz-master', 'ha-hz-worker-1', 'ha-hz-worker-2'],
+    );
 
     expect(order).toEqual([
       'copies ha-hz-master',

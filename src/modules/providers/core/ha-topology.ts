@@ -10,6 +10,18 @@ export interface HaTopology {
   dataZones: string[];
   /** False when a person forced a region Flui has not validated. */
   validated: boolean;
+  /**
+   * True when Flui measured these locations itself; false when it took them on
+   * the provider's word that they are zones of one region, close together.
+   */
+  measured: boolean;
+}
+
+/** `fsn1`, `fsn1 and nbg1`, `a, b and c`. */
+export function locationList(zones: string[]): string {
+  return zones.length < 2
+    ? zones.join('')
+    : `${zones.slice(0, -1).join(', ')} and ${zones.at(-1)}`;
 }
 
 export type HaTopologyResolution =
@@ -57,6 +69,7 @@ export function resolveHaTopology(
       zones: zones as [string, string, string],
       dataZones: zones,
       validated: false,
+      measured: false,
     },
   };
 }

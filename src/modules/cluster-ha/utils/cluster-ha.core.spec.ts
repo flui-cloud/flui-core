@@ -11,6 +11,7 @@ const hetzner: HaTopology = {
   zones: ['fsn1', 'nbg1', 'hel1'],
   dataZones: ['fsn1', 'nbg1'],
   validated: true,
+  measured: true,
 };
 const layout = { topology: hetzner };
 
@@ -73,6 +74,48 @@ describe('cluster HA state', () => {
     ]);
   });
 
+  it('where every location holds data, each needs a node that takes applications', () => {
+    const s = clusterHaState(
+      [n('a', 'z1', true), n('b', 'z2', true), n('c', 'z3', true, false)],
+      {
+        topology: {
+          region: 'r',
+          zones: ['z1', 'z2', 'z3'],
+          dataZones: ['z1', 'z2', 'z3'],
+          validated: true,
+          measured: true,
+        },
+      },
+    );
+    expect(s.level).toBe('standard');
+    expect(s.missing).toEqual([
+      {
+        role: 'data-host',
+        zone: 'z3',
+        why: 'Copies of data live in z1, z2 and z3, one in each, on a node that takes applications.',
+      },
+    ]);
+  });
+
+  it("says when Flui took the layout on the provider's word", () => {
+    const s = clusterHaState(
+      [n('a', 'z1', true), n('b', 'z2', true), n('c', 'z3', true)],
+      {
+        topology: {
+          region: 'r',
+          zones: ['z1', 'z2', 'z3'],
+          dataZones: ['z1', 'z2', 'z3'],
+          validated: true,
+          measured: false,
+        },
+      },
+    );
+    expect(s.level).toBe('three-locations');
+    expect(s.warnings).toContain(
+      'The provider declares z1, z2 and z3 as zones of one region, close together; Flui has not measured them yet.',
+    );
+  });
+
   it('warns that two servers are more fragile than one', () => {
     const s = clusterHaState(
       [n('s1', 'fsn1', true), n('s2', 'nbg1', true), n('w1', 'fsn1')],
@@ -101,6 +144,7 @@ describe('cluster HA state', () => {
           zones: ['z1', 'z2', 'z3'],
           dataZones: ['z1', 'z2', 'z3'],
           validated: false,
+          measured: false,
         },
       },
     );

@@ -1,6 +1,6 @@
 import { HaCandidateNode } from '../../postgres-ha/utils/postgres-ha-feasibility.core';
 import { HEADERS_INSTALL } from './replicated-votes.core';
-import { HaTopology } from '../../providers/core/ha-topology';
+import { HaTopology, locationList } from '../../providers/core/ha-topology';
 import {
   PIRAEUS_API_VERSION,
   REPLICATED_POOL,
@@ -13,47 +13,55 @@ import { TOPOLOGY_ZONE_LABEL } from '../../providers/core/node-topology';
 
 const DRBD_OPTION = 'property.linstor.csi.linbit.com/DrbdOptions';
 
+const OFF_COPIES = {
+  key: REPLICATED_STORAGE_NODE_LABEL,
+  operator: 'DoesNotExist',
+};
+
 /**
  * The components that attach volumes and keep the engine's records run as a
  * single copy; lost with a location that holds data, no volume could move
- * until Kubernetes moved them minutes later. They stay off the nodes with
- * copies and, where the layout has one, in the voting location: losing that
- * location never asks a volume to move.
+ * until Kubernetes moved them minutes later. Where the layout has a voting
+ * location they stay there, off the nodes with copies: losing that location
+ * never asks a volume to move. Where every location holds data no such place
+ * exists, so they only prefer a node without copies.
  */
 const awayFromCopies = (voteZones: string[]) => ({
   podTemplate: {
     spec: {
       affinity: {
-        nodeAffinity: {
-          requiredDuringSchedulingIgnoredDuringExecution: {
-            nodeSelectorTerms: [
-              {
-                matchExpressions: [
+        nodeAffinity: voteZones.length
+          ? {
+              requiredDuringSchedulingIgnoredDuringExecution: {
+                nodeSelectorTerms: [
                   {
-                    key: REPLICATED_STORAGE_NODE_LABEL,
-                    operator: 'DoesNotExist',
+                    matchExpressions: [
+                      OFF_COPIES,
+                      {
+                        key: TOPOLOGY_ZONE_LABEL,
+                        operator: 'In',
+                        values: voteZones,
+                      },
+                    ],
                   },
-                  ...(voteZones.length
-                    ? [
-                        {
-                          key: TOPOLOGY_ZONE_LABEL,
-                          operator: 'In',
-                          values: voteZones,
-                        },
-                      ]
-                    : []),
                 ],
               },
-            ],
-          },
-        },
+            }
+          : {
+              preferredDuringSchedulingIgnoredDuringExecution: [
+                {
+                  weight: 100,
+                  preference: { matchExpressions: [OFF_COPIES] },
+                },
+              ],
+            },
       },
       tolerations: [{ operator: 'Exists', effect: 'NoSchedule' }],
     },
   },
 });
 
-/** The locations that only vote; none on a forced region, where every location holds data. */
+/** The locations that only vote; none where every location holds data. */
 export function voteZonesOf(topology: HaTopology): string[] {
   return topology.zones.filter((z) => !topology.dataZones.includes(z));
 }
@@ -122,13 +130,16 @@ export function renderSatelliteConfigurations(): Record<string, unknown>[] {
 }
 
 /**
- * Two synchronous copies, only on prepared nodes, each in its own location, and
- * a pod only where a copy is. Quorum is asked for explicitly: without it a node
- * cut off from the other keeps confirming writes only it holds, and nothing
- * moves the pod. The rule on locations also holds for the tie-breaker, which
- * needs no storage pool, so it lands in the third location.
+ * One synchronous copy per location for data, only on prepared nodes, and a
+ * pod only where a copy is. Quorum is asked for explicitly: without it a node
+ * cut off from the others keeps confirming writes only it holds, and nothing
+ * moves the pod. With two copies the rule on locations also holds for the
+ * tie-breaker, which needs no storage pool, so it lands in the third location;
+ * three copies are a majority on their own.
  */
-export function renderReplicatedStorageClass(): Record<string, unknown> {
+export function renderReplicatedStorageClass(
+  copies = 2,
+): Record<string, unknown> {
   return {
     apiVersion: 'storage.k8s.io/v1',
     kind: 'StorageClass',
@@ -142,7 +153,7 @@ export function renderReplicatedStorageClass(): Record<string, unknown> {
     reclaimPolicy: 'Delete',
     parameters: {
       'linstor.csi.linbit.com/storagePool': REPLICATED_POOL,
-      'linstor.csi.linbit.com/placementCount': '2',
+      'linstor.csi.linbit.com/placementCount': String(copies),
       'linstor.csi.linbit.com/allowRemoteVolumeAccess': 'false',
       'linstor.csi.linbit.com/replicasOnDifferent':
         'Aux/topology/topology.kubernetes.io/zone',
@@ -261,15 +272,16 @@ export type ReplicatedVolumesFeasibility =
 
 /**
  * Which nodes hold the copies: one that takes applications in each of the
- * layout's locations for data, and the nodes of the remaining location for
- * the tie-breaking vote. Nodes already prepared are kept when they still fit,
- * so enabling again does not move copies around.
+ * layout's locations for data and, with only two of them, the nodes of the
+ * remaining location for the tie-breaking vote. Nodes already prepared are
+ * kept when they still fit, so enabling again does not move copies around.
  */
 export function replicatedVolumesFeasibility(
   nodes: HaCandidateNode[],
   topology: HaTopology,
   options: { requested?: string[]; prepared?: string[] } = {},
 ): ReplicatedVolumesFeasibility {
+  const copies = topology.dataZones.length;
   const fits = (n: HaCandidateNode) =>
     n.schedulable && !!n.zone && topology.dataZones.includes(n.zone);
   let storage: HaCandidateNode[];
@@ -292,12 +304,12 @@ export function replicatedVolumesFeasibility(
       };
     }
     if (
-      new Set(storage.map((n) => n.zone)).size !== 2 ||
-      storage.length !== 2
+      new Set(storage.map((n) => n.zone)).size !== copies ||
+      storage.length !== copies
     ) {
       return {
         feasible: false,
-        reason: `The two copies go in two different locations among ${topology.dataZones.join(', ')}.`,
+        reason: `Name ${copies} nodes, one in each location for data: ${locationList(topology.dataZones)}.`,
       };
     }
   } else {
@@ -312,12 +324,11 @@ export function replicatedVolumesFeasibility(
         )[0];
     storage = topology.dataZones
       .map(pick)
-      .filter((n): n is HaCandidateNode => !!n)
-      .slice(0, 2);
-    if (storage.length < 2) {
+      .filter((n): n is HaCandidateNode => !!n);
+    if (storage.length < copies) {
       return {
         feasible: false,
-        reason: `Replicated volumes need a node that takes applications in ${topology.dataZones.join(' and ')}.`,
+        reason: `Replicated volumes need a node that takes applications in ${locationList(topology.dataZones)}.`,
       };
     }
   }
@@ -325,10 +336,13 @@ export function replicatedVolumesFeasibility(
   const storageNames = storage
     .map((n) => n.name)
     .sort((a, b) => a.localeCompare(b));
-  const tieBreakers = nodes
-    .filter((n) => !!n.zone && !zones.includes(n.zone))
-    .map((n) => n.name);
-  if (!tieBreakers.length) {
+  const tieBreakers =
+    copies < 3
+      ? nodes
+          .filter((n) => !!n.zone && !zones.includes(n.zone))
+          .map((n) => n.name)
+      : [];
+  if (copies < 3 && !tieBreakers.length) {
     return {
       feasible: false,
       reason: `Copies in ${zones.join(' and ')} need a node in a third location for the tie-breaking vote.`,
@@ -361,6 +375,42 @@ export function controlPodsOnCopies(
       );
     })
     .map((p) => p.metadata!.name!);
+}
+
+export const SATELLITE_SELECTOR =
+  'app.kubernetes.io/component=linstor-satellite';
+
+type ContainerStates = Array<{
+  state?: { waiting?: { reason?: string } };
+}>;
+
+/**
+ * Satellites on the nodes just prepared that wait out a crash backoff: one
+ * that failed before its node had kernel headers tries again only after up to
+ * five minutes. One still starting, or serving volumes, is left alone.
+ */
+export function stuckSatellites(
+  pods: Array<{
+    metadata?: { name?: string };
+    spec?: { nodeName?: string };
+    status?: {
+      initContainerStatuses?: ContainerStates;
+      containerStatuses?: ContainerStates;
+    };
+  }>,
+  nodes: string[],
+): string[] {
+  const backingOff = (states?: ContainerStates) =>
+    (states ?? []).some((c) => c.state?.waiting?.reason === 'CrashLoopBackOff');
+  return pods
+    .filter((p) => nodes.includes(p.spec?.nodeName ?? ''))
+    .filter(
+      (p) =>
+        backingOff(p.status?.initContainerStatuses) ||
+        backingOff(p.status?.containerStatuses),
+    )
+    .map((p) => p.metadata?.name ?? '')
+    .filter(Boolean);
 }
 
 export interface VolumeClassLike {

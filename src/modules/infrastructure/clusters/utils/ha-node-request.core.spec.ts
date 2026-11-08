@@ -8,6 +8,7 @@ const state = (over: Partial<ClusterHaState> = {}): ClusterHaState =>
     unsupported: null,
     topology: {
       validated: true,
+      measured: true,
       zones: [
         {
           zone: 'fsn1',
