@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.15.0-rc.2",
+      "publishedAt": "2026-11-19T20:26:53.347Z",
+      "bootstrapRef": "6545479",
+      "images": {
+        "fluiApi": "0.15.0-rc.2",
+        "fluiWeb": "0.15.0-rc.2",
+        "fluiAuthz": "0.7.1"
+      },
+      "notes": [
+        "Replicated volumes are ready for an application as soon as they are enabled, and a deploy no longer waits for a node it does not need. Destroyed clusters no longer slow down the checks of the others."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.15.0-rc.1",
       "publishedAt": "2026-11-19T18:53:38.591Z",
       "bootstrapRef": "6545479",
