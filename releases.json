@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.15.0",
+      "publishedAt": "2026-11-19T21:32:09.606Z",
+      "bootstrapRef": "6545479",
+      "images": {
+        "fluiApi": "0.15.0",
+        "fluiWeb": "0.15.0",
+        "fluiAuthz": "0.7.1"
+      },
+      "notes": [
+        "The 0.15 line, now stable: high availability across three locations. A cluster is created across three locations in one step, a PostgreSQL survives the loss of a server or a location with continuous backup and restore to any moment, and application volumes keep a copy in every location that holds data. Coming from 0.14, the update runs two database migrations and backs up the platform first."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.15.0-rc.2",
       "publishedAt": "2026-11-19T20:26:53.347Z",
       "bootstrapRef": "6545479",
