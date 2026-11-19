@@ -4,6 +4,7 @@ import { CNPG_NAMESPACE } from '../postgres-ha.constants';
 import {
   PGBACKREST_PLUGIN_DEPLOYMENT,
   PGBACKREST_PLUGIN_MANIFEST_URL,
+  pgbackrestPluginPlacement,
   pinnedPgbackrestPluginManifest,
 } from '../utils/pgbackrest-plugin.core';
 
@@ -51,6 +52,10 @@ export class PgbackrestPluginInstallerService {
       );
       this.logger.log(`pgBackRest plugin: ${applied} objects applied`);
     }
+    await this.kubernetesService.mergePatchObject(
+      kubeconfig,
+      pgbackrestPluginPlacement(),
+    );
     await this.waitReady(kubeconfig);
   }
 

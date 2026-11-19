@@ -15,3 +15,15 @@ export const POSTGRES_HA_QUEUE = 'postgres-ha';
 export const POSTGRES_HA_JOB_ACTIVATE = 'activate-database-ha';
 /** The only range the copy may stream from. */
 export { POD_NETWORK as CLUSTER_POD_NETWORK } from '../infrastructure/clusters/constants';
+
+/**
+ * A rolling restart hands the primary's role to a copy that confirmed every
+ * write before restarting it: writes pause for seconds, not for the restart.
+ */
+export const CNPG_PRIMARY_UPDATE_METHOD = 'switchover';
+
+/** The phase CloudNativePG reports once every instance serves and nothing is under way. */
+export const CNPG_HEALTHY_PHASE = 'Cluster in healthy state';
+
+/** The role the operator streams and rewinds with. */
+export const CNPG_REPLICATION_USER = 'streaming_replica';

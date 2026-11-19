@@ -4,6 +4,8 @@ import {
   caughtUpSql,
   copyHbaScript,
   fenceSql,
+  pgRewindGrantedSql,
+  pgRewindGrantsSql,
   primarySelectorPatch,
   promotionPatch,
   renderCnpgCopyCluster,
@@ -109,6 +111,17 @@ describe('the single instance while its copy exists', () => {
   it('leaves out the pods of the copy, which carry the same application id', () => {
     expect(singleInstanceSelector('flui-app-id=a1')).toBe(
       'flui-app-id=a1,!cnpg.io/cluster',
+    );
+  });
+
+  it('grants the replication user the four functions pg_rewind reads the primary with', () => {
+    const grants = pgRewindGrantsSql();
+    expect(grants.match(/GRANT EXECUTE ON FUNCTION/g)).toHaveLength(4);
+    expect(grants).toContain(
+      'pg_catalog.pg_read_binary_file(text, bigint, bigint, boolean) TO streaming_replica',
+    );
+    expect(pgRewindGrantedSql().match(/has_function_privilege/g)).toHaveLength(
+      4,
     );
   });
 });

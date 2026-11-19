@@ -1,6 +1,7 @@
 import {
   CNPG_API_VERSION,
   CNPG_POSTGRES_IMAGE,
+  CNPG_REPLICATION_USER,
 } from '../postgres-ha.constants';
 import { CnpgClusterInput, renderCnpgCluster } from './cnpg-cluster.core';
 
@@ -76,6 +77,31 @@ export function unfenceSql(): string[] {
     'ALTER SYSTEM RESET default_transaction_read_only',
     'SELECT pg_reload_conf()',
   ];
+}
+
+const PG_REWIND_FUNCTIONS = [
+  'pg_catalog.pg_ls_dir(text, boolean, boolean)',
+  'pg_catalog.pg_stat_file(text, boolean)',
+  'pg_catalog.pg_read_binary_file(text)',
+  'pg_catalog.pg_read_binary_file(text, bigint, bigint, boolean)',
+];
+
+/**
+ * What a former primary needs to rejoin as a copy: the operator grants it only
+ * when Postgres starts as a primary, and a promoted copy never does, so a
+ * switchover would leave the old primary unable to rewind.
+ */
+export function pgRewindGrantsSql(): string {
+  return PG_REWIND_FUNCTIONS.map(
+    (f) => `GRANT EXECUTE ON FUNCTION ${f} TO ${CNPG_REPLICATION_USER};`,
+  ).join(' ');
+}
+
+export function pgRewindGrantedSql(): string {
+  return `SELECT ${PG_REWIND_FUNCTIONS.map(
+    (f) =>
+      `has_function_privilege('${CNPG_REPLICATION_USER}', '${f}', 'execute')`,
+  ).join(' AND ')}`;
 }
 
 export function caughtUpSql(sourceLsn: string): string {

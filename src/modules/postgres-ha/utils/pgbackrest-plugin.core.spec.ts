@@ -3,6 +3,7 @@ import * as yaml from 'js-yaml';
 import {
   PGBACKREST_PLUGIN_IMAGE_DIGESTS,
   archiveThroughPluginPatch,
+  pgbackrestPluginPlacement,
   pinnedPgbackrestPluginManifest,
   pluginBackupState,
   promotedReplicaPatch,
@@ -152,5 +153,21 @@ describe('the repository of a highly available database', () => {
       error: 'no space',
     });
     expect(pluginBackupState({})).toEqual({ phase: 'running' });
+  });
+});
+
+describe('where the plugin controller runs', () => {
+  it('keeps a copy in two locations, so losing one does not stop the failover', () => {
+    const placement = pgbackrestPluginPlacement() as {
+      spec: { replicas: number; template: { spec: Record<string, any> } };
+    };
+    expect(placement.spec.replicas).toBe(2);
+    expect(
+      placement.spec.template.spec.affinity.podAntiAffinity
+        .requiredDuringSchedulingIgnoredDuringExecution[0],
+    ).toEqual({
+      labelSelector: { matchLabels: { app: 'pgbackrest-controller' } },
+      topologyKey: 'topology.kubernetes.io/zone',
+    });
   });
 });

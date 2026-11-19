@@ -7,6 +7,8 @@ jest.mock('ip-cidr', () => ({}));
 import { BadRequestException } from '@nestjs/common';
 import { PgBackrestHaService, describeFailure } from './pgbackrest-ha.service';
 
+const HEALTHY = 'Cluster in healthy state';
+
 const ha = {
   engine: 'cnpg',
   cluster: 'orders-db-ha',
@@ -27,7 +29,7 @@ function build(databaseHa: object | null = ha) {
         { metadata: { name: 'orders-db-ha-1' } },
         { metadata: { name: 'orders-db-ha-2' } },
       ]),
-    readObject: jest.fn(),
+    readObject: jest.fn().mockResolvedValue({ status: { phase: HEALTHY } }),
     deleteObject: jest.fn(),
   };
   const plugin = { ensureInstalled: jest.fn() };
@@ -104,8 +106,39 @@ describe('continuous backup of a highly available Postgres', () => {
     ).toBe(true);
   });
 
+  it('touches no instance while one restarts, and retries the segment switch while the plugin is added', async () => {
+    jest.useFakeTimers();
+    try {
+      const { service, k8s } = build();
+      k8s.readObject
+        .mockResolvedValueOnce({ spec: {} })
+        .mockResolvedValueOnce({ status: { phase: 'Switchover in progress' } })
+        .mockResolvedValue({ status: { phase: HEALTHY } });
+      let switches = 0;
+      k8s.execInPod.mockImplementation(async (...args: unknown[]) => {
+        const script = (args[4] as string[])[2];
+        if (script.includes('pg_switch_wal') && switches++ === 0) {
+          throw { status: 'Failure', message: 'no such file or directory' };
+        }
+        if (script.includes('pg_switch_wal')) return '000000020000000000000012';
+        if (script.includes('pg_stat_archiver')) return 't|';
+        return '';
+      });
+
+      const enabled = service.enable('a1', destination as never, {});
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(k8s.execInPod).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(30_000);
+      await enabled;
+
+      expect(switches).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('returns the label of the base the plugin took', async () => {
-    const { service, k8s } = build();
+    const { service, k8s, plugin } = build();
     k8s.readObject.mockResolvedValue({
       status: { phase: 'completed', backupId: '20261108-120500F' },
     });
@@ -113,6 +146,7 @@ describe('continuous backup of a highly available Postgres', () => {
     await expect(service.baseBackup('a1', 'full')).resolves.toBe(
       '20261108-120500F',
     );
+    expect(plugin.ensureInstalled).toHaveBeenCalledWith('plain-kc');
     expect(k8s.serverSideApply.mock.calls[0][1]).toContain(
       '"backupType":"full"',
     );
@@ -122,6 +156,7 @@ describe('continuous backup of a highly available Postgres', () => {
     const { service, k8s } = build();
     k8s.readObject.mockResolvedValue({
       spec: { replica: { enabled: false, source: 'flui-single' } },
+      status: { phase: HEALTHY },
     });
     Object.assign(service, {
       untilArchiving: jest

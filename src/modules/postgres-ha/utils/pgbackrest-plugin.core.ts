@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as yaml from 'js-yaml';
-import { CNPG_API_VERSION } from '../postgres-ha.constants';
+import { TOPOLOGY_ZONE_LABEL } from '../../providers/core/node-topology';
+import { CNPG_API_VERSION, CNPG_NAMESPACE } from '../postgres-ha.constants';
 
 /**
  * Dalibo's pgBackRest plugin for CloudNativePG: the same tool, repository
@@ -74,6 +75,43 @@ export function pinnedPgbackrestPluginManifest(
     if (doc.kind === 'Deployment') pinContainers(doc);
   }
   return docs.map((d) => yaml.dump(d, { lineWidth: -1 })).join('---\n');
+}
+
+export const PGBACKREST_PLUGIN_REPLICAS = 2;
+
+/**
+ * Once a cluster names the plugin, the operator reconciles nothing, a failover
+ * included, while it cannot reach the plugin's controller. As shipped that is
+ * one copy, so losing its location stops the database. Two copies in
+ * different locations: the controller serves only while it holds its lease,
+ * and its readiness probe is that port, so traffic follows the holder.
+ */
+export function pgbackrestPluginPlacement(): Record<string, unknown> {
+  return {
+    apiVersion: 'apps/v1',
+    kind: 'Deployment',
+    metadata: { name: PGBACKREST_PLUGIN_DEPLOYMENT, namespace: CNPG_NAMESPACE },
+    spec: {
+      replicas: PGBACKREST_PLUGIN_REPLICAS,
+      template: {
+        spec: {
+          affinity: {
+            podAntiAffinity: {
+              requiredDuringSchedulingIgnoredDuringExecution: [
+                {
+                  labelSelector: {
+                    matchLabels: { app: PGBACKREST_PLUGIN_DEPLOYMENT },
+                  },
+                  topologyKey: TOPOLOGY_ZONE_LABEL,
+                },
+              ],
+            },
+          },
+          tolerations: [{ operator: 'Exists', effect: 'NoSchedule' }],
+        },
+      },
+    },
+  };
 }
 
 export interface PluginRepository {

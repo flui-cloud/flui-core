@@ -62,6 +62,16 @@ export class PostgresHaPortsAdapter {
         } as InfrastructureOperationEntity['metadata'],
       });
     };
+    const singleContainer = async () =>
+      (
+        await this.kubernetes.readObject(
+          kubeconfig,
+          'apps/v1',
+          'StatefulSet',
+          app.slug,
+          namespace,
+        )
+      )?.spec?.template?.spec?.containers?.[0];
     const clusterObject = (name: string) =>
       this.kubernetes.readObject(
         kubeconfig,
@@ -140,19 +150,9 @@ export class PostgresHaPortsAdapter {
         ),
       superuserPassword: async () => {
         if (source.pgUser !== 'postgres') return null;
-        const sts = await this.kubernetes.readObject(
-          kubeconfig,
-          'apps/v1',
-          'StatefulSet',
-          app.slug,
-          namespace,
-        );
-        const ref = (
-          sts?.spec?.template?.spec?.containers?.[0]?.env ?? []
-        ).find((e: { name: string }) => e.name === 'POSTGRES_PASSWORD')
-          ?.valueFrom?.secretKeyRef as
-          | { name: string; key: string }
-          | undefined;
+        const ref = ((await singleContainer())?.env ?? []).find(
+          (e: { name: string }) => e.name === 'POSTGRES_PASSWORD',
+        )?.valueFrom?.secretKeyRef as { name: string; key: string } | undefined;
         if (!ref) return null;
         const secret = await this.kubernetes.readObject(
           kubeconfig,
@@ -164,6 +164,7 @@ export class PostgresHaPortsAdapter {
         const value = secret?.data?.[ref.key];
         return value ? Buffer.from(value, 'base64').toString('utf8') : null;
       },
+      sourceResources: async () => (await singleContainer())?.resources ?? null,
       saveState: async (spec) => {
         await this.apps.update(app.id, { databaseHa: spec });
       },

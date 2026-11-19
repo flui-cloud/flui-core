@@ -1,7 +1,9 @@
 import { TOPOLOGY_ZONE_LABEL } from '../../providers/core/node-topology';
+import { ResourcePair } from '../../shared/utils/resource-quantity.util';
 import {
   CNPG_API_VERSION,
   CNPG_POSTGRES_IMAGE,
+  CNPG_PRIMARY_UPDATE_METHOD,
 } from '../postgres-ha.constants';
 
 /**
@@ -24,7 +26,8 @@ export interface CnpgClusterInput {
   owner: string;
   credentialsSecret: string;
   imageName?: string;
-  resources?: { cpu?: string; memory?: string };
+  /** The single instance's requests and limits, carried over as they are. */
+  resources?: ResourcePair;
 }
 
 /** The operator's own exporter; the cluster's metrics agent collects what carries these. */
@@ -69,17 +72,6 @@ export function renderCnpgCluster(
       ],
     },
   };
-  const resources = input.resources
-    ? {
-        requests: {
-          ...(input.resources.cpu && { cpu: input.resources.cpu }),
-          ...(input.resources.memory && { memory: input.resources.memory }),
-        },
-        ...(input.resources.memory && {
-          limits: { memory: input.resources.memory },
-        }),
-      }
-    : undefined;
   return {
     apiVersion: CNPG_API_VERSION,
     kind: 'Cluster',
@@ -88,6 +80,7 @@ export function renderCnpgCluster(
       instances: input.instances,
       imageName: input.imageName ?? CNPG_POSTGRES_IMAGE,
       primaryUpdateStrategy: 'unsupervised',
+      primaryUpdateMethod: CNPG_PRIMARY_UPDATE_METHOD,
       inheritedMetadata: { labels, annotations: METRICS_ANNOTATIONS },
       storage: { storageClass: input.storageClass, size: `${input.sizeGi}Gi` },
       bootstrap: {
@@ -108,7 +101,7 @@ export function renderCnpgCluster(
         },
       },
       affinity,
-      ...(resources && { resources }),
+      ...(input.resources && { resources: input.resources }),
     },
   };
 }

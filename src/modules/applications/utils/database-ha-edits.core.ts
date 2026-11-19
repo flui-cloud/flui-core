@@ -29,6 +29,19 @@ export function databaseHaResizeRefusal(
   return spec?.state === 'copying' ? MOVING : null;
 }
 
+/**
+ * What a change applies over: the cluster's own resources, or, when it was
+ * made without any, those the single instance ran with.
+ */
+export function haResourceBase(
+  cluster: ResourcePair | undefined,
+  single: ResourcePair | undefined,
+): ResourcePair {
+  return cluster && (cluster.requests || cluster.limits)
+    ? cluster
+    : (single ?? {});
+}
+
 /** The resources after a change: the values given over the current ones. */
 export function mergedResources(
   current: ResourcePair,
