@@ -20,8 +20,8 @@ importers:
         specifier: ^0.7.0
         version: 0.7.0
       '@flui-cloud/infra':
-        specifier: ^0.6.3
-        version: 0.6.3(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+        specifier: ^0.6.4
+        version: 0.6.4(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@flui-cloud/mail':
         specifier: ^0.1.0
         version: 0.1.0
@@ -29,8 +29,8 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
       '@flui-cloud/spec':
-        specifier: ^0.11.0
-        version: 0.11.0
+        specifier: ^0.12.0
+        version: 0.12.0
       '@kubernetes/client-node':
         specifier: ^1.4.0
         version: 1.4.0(encoding@0.1.13)
@@ -1037,10 +1037,10 @@ packages:
       }
     engines: { node: '>=20.0.0' }
 
-  '@flui-cloud/infra@0.6.3':
+  '@flui-cloud/infra@0.6.4':
     resolution:
       {
-        integrity: sha512-QgzCBKbDAE98UZ+w3b4pR7dx4w9ZQkorDKpZm8L/l8hAF5gEY6FZo912DouozEP+zIxAVBITjz9R3qFpQA1tBw==,
+        integrity: sha512-93ObFCnOjdUiKDxOCBwf6SvioVkuxSVdMa/5uHAl4vkFnG+LNN7TdCsxmCWXna9mqPsGSLb7PC5vkg4QlQmI1A==,
       }
     peerDependencies:
       '@nestjs/common': '>=10'
@@ -1065,10 +1065,10 @@ packages:
       }
     engines: { node: '>=20.0.0' }
 
-  '@flui-cloud/spec@0.11.0':
+  '@flui-cloud/spec@0.12.0':
     resolution:
       {
-        integrity: sha512-8ZDBn0IW+tPj3fqDBJQTmqOiczv9kEBlE1bI/Sq9mhad/5F4IhohjSoqbcdeaDNhCSQgHcKfuCL9xdTKHTjh2g==,
+        integrity: sha512-0OPU49trPl4Nf1ENO+PiT5NBDKqMx/iAfbFRm0UG4ib1YFoc7QpCtMLXgtzRyxRTP8DdaVmCAct42wO81S9n1g==,
       }
     hasBin: true
 
@@ -10399,7 +10399,7 @@ snapshots:
 
   '@flui-cloud/cartographer@0.7.0': {}
 
-  '@flui-cloud/infra@0.6.3(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
+  '@flui-cloud/infra@0.6.4(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.2.6(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.6)(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)':
     dependencies:
       '@nestjs/common': 11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/config': 4.0.2(@nestjs/common@11.1.6(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2)
@@ -10418,7 +10418,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
 
-  '@flui-cloud/spec@0.11.0':
+  '@flui-cloud/spec@0.12.0':
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
