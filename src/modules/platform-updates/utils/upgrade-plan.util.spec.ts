@@ -31,6 +31,11 @@ describe('planning a platform update', () => {
             title: 'This release changes the bootstrap manifests',
             detail: '',
           },
+          {
+            level: 'warning',
+            title: '2 database migrations will run',
+            detail: '',
+          },
         ],
       } as never,
       '1.9.0',
@@ -200,7 +205,7 @@ describe('planning a platform update', () => {
         ],
       }).map((a) => a.title),
     ).toEqual([
-      '2 database migration(s) will run',
+      '2 database migrations will run',
       'The control cluster is unreachable for a minute or two',
     ]);
     expect(updateAdvisories(0, NO_K3S_PHASE)).toEqual([]);

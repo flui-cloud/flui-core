@@ -68,6 +68,12 @@ export const VERIFY_PHASE: UpgradePlanPhase = {
   blockers: [],
 };
 
+/** Status advisories the plan states itself, for the release it targets. */
+const REPLACED_BY_THE_PLAN = [
+  /^This release changes the bootstrap/,
+  /^\d+ database migrations? will run$/,
+];
+
 /** What stops the release as a whole, and the advisories that carry over. */
 export function releaseAssessment(
   status: Pick<
@@ -92,7 +98,7 @@ export function releaseAssessment(
   for (const a of status.advisories) {
     if (a.level === 'blocker') {
       blockers.push({ phase: 'release', message: `${a.title}. ${a.detail}` });
-    } else if (!a.title.startsWith('This release changes the bootstrap')) {
+    } else if (!REPLACED_BY_THE_PLAN.some((p) => p.test(a.title))) {
       advisories.push(a);
     }
   }
@@ -108,7 +114,7 @@ export function updateAdvisories(
   if (migrations > 0) {
     out.push({
       level: 'warning',
-      title: `${migrations} database migration(s) will run`,
+      title: `${migrations} database migration${migrations === 1 ? '' : 's'} will run`,
       detail:
         'The new API applies them when it starts. Restoring the backup taken first is the only way back.',
     });

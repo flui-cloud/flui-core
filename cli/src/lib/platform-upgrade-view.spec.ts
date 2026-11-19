@@ -34,7 +34,7 @@ const plan = (over: Partial<UpgradePlanView> = {}): UpgradePlanView => ({
   applicable: true,
   acknowledgement: ACK,
   advisories: [
-    { level: 'warning', title: '2 database migration(s) will run', detail: '' },
+    { level: 'warning', title: '2 database migrations will run', detail: '' },
   ],
   blockers: [],
   phases: [
