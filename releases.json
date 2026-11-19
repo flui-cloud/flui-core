@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.15.0-rc.1",
+      "publishedAt": "2026-11-19T18:53:38.591Z",
+      "bootstrapRef": "6545479",
+      "images": {
+        "fluiApi": "0.15.0-rc.1",
+        "fluiWeb": "0.15.0-rc.1",
+        "fluiAuthz": "0.7.1"
+      },
+      "notes": [
+        "High availability across three locations: a cluster created across three locations in one step, a PostgreSQL that survives the loss of a server or a location with continuous backup and restore to any moment, and application volumes copied to every location that holds data."
+      ],
+      "migrations": 2,
+      "requiresBootstrap": true,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": ["control"]
+    },
+    {
       "version": "0.14.0",
       "publishedAt": "2026-11-03T20:27:46.612Z",
       "bootstrapRef": "f9afb81",

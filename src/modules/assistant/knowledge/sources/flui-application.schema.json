@@ -566,7 +566,12 @@
       "properties": {
         "name": { "type": "string" },
         "mountPath": { "type": "string" },
-        "size": { "type": "string", "description": "e.g. \"1Gi\"." }
+        "size": { "type": "string", "description": "e.g. \"1Gi\"." },
+        "replicated": {
+          "type": "boolean",
+          "default": false,
+          "description": "Keep a second copy of this volume in another location of the cluster, written at the same time as the first. When the server or the location running the application is lost, the application starts again on the other copy with its data. The cluster must be highly available across three locations and have replicated volumes enabled (`flui cluster replicated-volumes <cluster> --enable`). An application with a replicated volume runs one copy at a time, stops the old version before starting the new one on every update, and has all of its volumes replicated or none. Read when the volume is created: setting it on a volume that already exists does not move its data."
+        }
       }
     },
     "configFile": {
