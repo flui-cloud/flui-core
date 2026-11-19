@@ -22,7 +22,8 @@ describe('ReplicatedVolumesProcessor.enable', () => {
       ensureCluster: jest.fn(),
       restartStuckSatellites: jest.fn(),
       moveControlOffCopies: jest.fn(),
-      ensureStorageClass: jest.fn(),
+      ensureStorageClass: jest.fn(async () => order.push('class')),
+      untilCapacityPublished: jest.fn(async () => order.push('room')),
     };
     const processor = new ReplicatedVolumesProcessor(
       {
@@ -65,7 +66,13 @@ describe('ReplicatedVolumesProcessor.enable', () => {
       'copies ha-hz-worker-1',
       'vote ha-hz-worker-2',
       'engine',
+      'class',
+      'room',
     ]);
+    expect(installer.untilCapacityPublished).toHaveBeenCalledWith(
+      'kubeconfig',
+      ['ha-hz-master', 'ha-hz-worker-1'],
+    );
     expect(operations.update).toHaveBeenLastCalledWith(
       'op-1',
       expect.objectContaining({ status: OperationStatus.COMPLETED }),

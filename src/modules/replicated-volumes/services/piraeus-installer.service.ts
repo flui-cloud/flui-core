@@ -18,9 +18,11 @@ import {
   renderSatelliteConfigurations,
 } from '../utils/replicated-volumes.core';
 import { pinnedPiraeusManifest } from '../utils/piraeus-images';
+import { nodesWithoutCapacity } from '../utils/replicated-capacity.core';
 
 const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_MS = 5000;
+const CAPACITY_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
  * Installs the replicated volume engine (Piraeus, with LINSTOR and DRBD) on a
@@ -148,6 +150,29 @@ export class PiraeusInstallerService {
     await this.kubernetesService.serverSideApply(
       kubeconfig,
       k8s.dumpYaml(desired),
+    );
+  }
+
+  /** Waits until the scheduler can see room for copies on every node that holds them. */
+  async untilCapacityPublished(
+    kubeconfig: string,
+    storageNodes: string[],
+  ): Promise<void> {
+    const storage = this.kubernetesService
+      .makeKubeConfig(kubeconfig)
+      .makeApiClient(k8s.StorageV1Api);
+    const start = Date.now();
+    let missing = storageNodes;
+    while (Date.now() - start < CAPACITY_TIMEOUT_MS) {
+      const list = await storage
+        .listCSIStorageCapacityForAllNamespaces({})
+        .catch(() => null);
+      missing = nodesWithoutCapacity(list?.items ?? [], storageNodes);
+      if (missing.length === 0) return;
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    throw new Error(
+      `The storage engine has not published the room for copies on ${missing.join(', ')}; enabling again picks up from here.`,
     );
   }
 

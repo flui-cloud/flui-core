@@ -101,6 +101,7 @@ export class ReplicatedVolumesProcessor {
 
       await this.step(operationId, OperationStep.REPLICATED_STORAGE_CLASS, 90);
       await this.installer.ensureStorageClass(kubeconfig, storageNodes.length);
+      await this.installer.untilCapacityPublished(kubeconfig, storageNodes);
 
       await this.operations.update(operationId, {
         status: OperationStatus.COMPLETED,

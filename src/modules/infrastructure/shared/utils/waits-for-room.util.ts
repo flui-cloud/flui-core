@@ -1,12 +1,19 @@
 import * as k8s from '@kubernetes/client-node';
 
-/** Pending because no node has room for it — not starting, and not pinned to a machine by its volume. */
+/**
+ * Where a volume, not a node, is what is missing: pinned to a machine, or no
+ * room published for its storage. A node added by scaling would not help.
+ */
+const VOLUME_BOUND =
+  /volume node affinity conflict|did not have enough free storage/i;
+
+/** Pending because no node has room for it — not starting, and not held back by its volume. */
 export function waitsForRoom(pod: k8s.V1Pod): boolean {
   if (pod.metadata?.deletionTimestamp) return false;
   const condition = scheduledFalse(pod);
   return (
     condition?.reason === 'Unschedulable' &&
-    !/volume node affinity conflict/i.test(condition.message ?? '')
+    !VOLUME_BOUND.test(condition.message ?? '')
   );
 }
 
