@@ -58,7 +58,27 @@ function build(databaseHa: object | null) {
     },
     kubeconfig: 'kc',
   });
-  internals.getWorkloadOrThrow = jest.fn();
+  internals.getWorkloadOrThrow = jest.fn().mockResolvedValue({
+    kind: 'StatefulSet',
+    name: 'orders-db',
+    resource: {
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: 'postgres',
+                resources: {
+                  requests: { cpu: '250m', memory: '256Mi' },
+                  limits: { cpu: '2', memory: '2Gi' },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
   internals.watchRollout = jest.fn();
   internals.buildRuntimeResponse = jest.fn().mockResolvedValue({});
   return { service, kubernetes, applications, revisions, internals };
@@ -66,7 +86,7 @@ function build(databaseHa: object | null) {
 
 describe('AppManagementService on a highly available database', () => {
   it('gives the new resources to its cluster, keeping what was not asked to change', async () => {
-    const { service, kubernetes, internals, revisions } = build(active);
+    const { service, kubernetes, revisions } = build(active);
 
     await service.updateResources('a1', {
       requests: { memory: '2Gi' },
@@ -82,12 +102,36 @@ describe('AppManagementService on a highly available database', () => {
           requests: { cpu: '500m', memory: '2Gi' },
           limits: { memory: '2Gi' },
         },
+        primaryUpdateMethod: 'switchover',
       },
     });
-    expect(internals.getWorkloadOrThrow).not.toHaveBeenCalled();
-    expect(kubernetes.patchWorkloadContainerResources).not.toHaveBeenCalled();
+    expect(kubernetes.patchWorkloadContainerResources).toHaveBeenCalledWith(
+      'kc',
+      'StatefulSet',
+      'ns',
+      'orders-db',
+      'postgres',
+      {
+        requests: { cpu: '500m', memory: '2Gi' },
+        limits: { memory: '2Gi' },
+      },
+    );
     expect(revisions.createAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: expect.anything() }),
+    );
+  });
+
+  it('starts from the requests and limits of the single instance when its cluster was made without any', async () => {
+    const { service, kubernetes } = build(active);
+    kubernetes.readObject.mockResolvedValue({ spec: {} });
+
+    await service.updateResources('a1', { requests: { memory: '384Mi' } });
+
+    expect(kubernetes.mergePatchObject.mock.calls[0][1].spec.resources).toEqual(
+      {
+        requests: { cpu: '250m', memory: '384Mi' },
+        limits: { cpu: '2', memory: '2Gi' },
+      },
     );
   });
 
@@ -101,6 +145,7 @@ describe('AppManagementService on a highly available database', () => {
     expect(
       patch.metadata.annotations['kubectl.kubernetes.io/restartedAt'],
     ).toEqual(expect.any(String));
+    expect(patch.spec.primaryUpdateMethod).toBe('switchover');
     expect(kubernetes.restartWorkload).not.toHaveBeenCalled();
   });
 

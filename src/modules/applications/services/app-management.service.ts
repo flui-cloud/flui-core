@@ -66,11 +66,15 @@ import {
 } from './statefulset-volume-swap.service';
 import { systemReplicasRefusal } from '../schedulers/platform-api-sizing';
 import { databaseHaServes } from '../../postgres-ha/postgres-ha.types';
-import { CNPG_API_VERSION } from '../../postgres-ha/postgres-ha.constants';
+import {
+  CNPG_API_VERSION,
+  CNPG_PRIMARY_UPDATE_METHOD,
+} from '../../postgres-ha/postgres-ha.constants';
 import {
   CNPG_RESTART_ANNOTATION,
   databaseHaReplicasRefusal,
   databaseHaResizeRefusal,
+  haResourceBase,
   mergedResources,
 } from '../utils/database-ha-edits.core';
 
@@ -208,8 +212,8 @@ export class AppManagementService {
 
   /**
    * A highly available database takes new resources on its cluster, which
-   * restarts the instances one at a time with the primary last; the single
-   * instance at zero has nothing to change.
+   * restarts the instances one at a time with the primary last. The single
+   * instance at zero takes them too, so the way back runs with them.
    */
   private async updateHaResources(
     app: ApplicationEntity,
@@ -234,7 +238,12 @@ export class AppManagementService {
         `The highly available cluster ${name} of this database is not there`,
       );
     }
-    const merged = mergedResources(cluster.spec?.resources ?? {}, dto);
+    const single = await this.getWorkloadOrThrow(app, kubeconfig);
+    const container = single.resource.spec?.template?.spec?.containers?.[0];
+    const merged = mergedResources(
+      haResourceBase(cluster.spec?.resources, container?.resources),
+      dto,
+    );
     const healed = healedResources(merged);
     const resources = healed ? { ...merged, ...healed } : merged;
     const belowRequest = limitBelowRequest(healed ?? {});
@@ -243,8 +252,18 @@ export class AppManagementService {
       apiVersion: CNPG_API_VERSION,
       kind: 'Cluster',
       metadata: { name, namespace: app.k8sNamespace },
-      spec: { resources },
+      spec: { resources, primaryUpdateMethod: CNPG_PRIMARY_UPDATE_METHOD },
     });
+    if (container) {
+      await this.kubernetesService.patchWorkloadContainerResources(
+        kubeconfig,
+        single.kind,
+        app.k8sNamespace,
+        single.name,
+        container.name,
+        resources,
+      );
+    }
     this.logger.log(
       `Updated resources of the highly available cluster ${name} in ${app.k8sNamespace}`,
     );
@@ -361,6 +380,7 @@ export class AppManagementService {
           namespace: app.k8sNamespace,
           annotations: { [CNPG_RESTART_ANNOTATION]: restartedAt },
         },
+        spec: { primaryUpdateMethod: CNPG_PRIMARY_UPDATE_METHOD },
       });
       await this.appRevisionsRepository.createAuditEvent({
         applicationId: appId,

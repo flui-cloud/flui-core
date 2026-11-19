@@ -1,9 +1,12 @@
 import { OperationStep } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
 import { DatabaseHaSpec } from '../postgres-ha.types';
 import { PostgresHaDurability } from '../utils/cnpg-cluster.core';
+import { ResourcePair } from '../../shared/utils/resource-quantity.util';
 import {
   caughtUpSql,
   copyHbaScript,
+  pgRewindGrantedSql,
+  pgRewindGrantsSql,
   primarySelectorPatch,
   promotionPatch,
   renderCnpgCopyCluster,
@@ -26,6 +29,8 @@ export interface HaActivationPorts {
   scaleSingleInstance(replicas: number): Promise<void>;
   /** The application's password when it signs in as `postgres`, otherwise null. */
   superuserPassword(): Promise<string | null>;
+  /** The requests and limits the single instance runs with. */
+  sourceResources(): Promise<ResourcePair | null>;
   saveState(spec: DatabaseHaSpec): Promise<void>;
   progress(step: OperationStep, message: string): Promise<void>;
   sleep(ms: number): Promise<void>;
@@ -121,6 +126,7 @@ export class PostgresHaActivationRunner {
       'Copying the database into the new cluster',
     );
     const superuserPassword = await this.ports.superuserPassword();
+    const resources = await this.ports.sourceResources();
     const labels = {
       'flui-app-id': plan.appId,
       'flui.cloud/managed-by': 'flui-cloud',
@@ -166,6 +172,7 @@ export class PostgresHaActivationRunner {
         sourceHost: `${plan.slug}-svc`,
         replicationSecret: `${cluster}-repl`,
         ...(superuserPassword && { superuserSecret: `${cluster}-superuser` }),
+        ...(resources && { resources }),
       }),
     ]);
     await this.ports.saveState(state('copying'));
@@ -233,6 +240,13 @@ export class PostgresHaActivationRunner {
       await this.ports.saveState(failed);
       throw new HaActivationError(failed.detail!, false);
     }
+    await this.waitFor(this.timeouts.promoteMs, async () => {
+      await this.ports.clusterSql(primary!, pgRewindGrantsSql());
+      return (
+        (await this.ports.clusterSql(primary!, pgRewindGrantedSql())).trim() ===
+        't'
+      );
+    });
 
     await this.ports.progress(
       OperationStep.DB_HA_SWITCH,

@@ -33,7 +33,10 @@ import {
   databaseHaServes,
   DatabaseHaSpec,
 } from '../../postgres-ha/postgres-ha.types';
-import { CNPG_API_VERSION } from '../../postgres-ha/postgres-ha.constants';
+import {
+  CNPG_API_VERSION,
+  CNPG_HEALTHY_PHASE,
+} from '../../postgres-ha/postgres-ha.constants';
 import { PgbackrestPluginInstallerService } from '../../postgres-ha/services/pgbackrest-plugin-installer.service';
 import {
   archiveThroughPluginPatch,
@@ -220,6 +223,7 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
       [secret, stanza].map((o) => k8s.dumpYaml(o)).join('---\n'),
     );
     await this.forgetPromotedSource(t);
+    await this.untilHealthy(t);
     await this.clearCopiedArchiveSettings(t);
     await this.k8s.mergePatchObject(
       t.kubeconfig,
@@ -246,11 +250,6 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
     );
   }
 
-  /**
-   * Adding the plugin restarts the instances one at a time; shipping is
-   * proven once the primary has the sidecar and pgBackRest's own check, which
-   * switches a segment and waits for it in the repository, passes.
-   */
   private async forgetPromotedSource(t: HaTarget): Promise<void> {
     const cluster = await this.k8s.readObject(
       t.kubeconfig,
@@ -268,15 +267,44 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
     }
   }
 
-  private async untilArchiving(t: HaTarget): Promise<void> {
-    const segment = (await this.postgres(t, SWITCH_SEGMENT))
-      .trim()
-      .split('\n')
-      .pop()!;
+  /** A promotion or a move of the primary restarts an instance; nothing is run in one while it does. */
+  private async untilHealthy(t: HaTarget): Promise<void> {
     const deadline = Date.now() + ARCHIVING_TIMEOUT_MS;
+    let phase = '';
+    while (Date.now() < deadline) {
+      const cluster = await this.k8s
+        .readObject(
+          t.kubeconfig,
+          CNPG_API_VERSION,
+          'Cluster',
+          t.ha.cluster,
+          t.namespace,
+        )
+        .catch(() => null);
+      phase = cluster?.status?.phase ?? '';
+      if (phase === CNPG_HEALTHY_PHASE) return;
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+    throw new Error(
+      `The highly available cluster did not settle before its backup was set up: ${phase || 'no status'}`,
+    );
+  }
+
+  /**
+   * Adding the plugin restarts the instances one at a time, so the segment
+   * switch is retried until the primary answers; shipping is proven once that
+   * segment is in the repository.
+   */
+  private async untilArchiving(t: HaTarget): Promise<void> {
+    const deadline = Date.now() + ARCHIVING_TIMEOUT_MS;
+    let segment = '';
     let last = '';
     while (Date.now() < deadline) {
       try {
+        segment ||= (await this.postgres(t, SWITCH_SEGMENT))
+          .trim()
+          .split('\n')
+          .pop()!;
         const state = parseArchivedSince(
           await this.postgres(t, archivedSince(segment)),
         );
@@ -342,6 +370,7 @@ export class PgBackrestHaService implements ContinuousBackupEngine {
     type: 'full' | 'incr' | 'diff' = 'full',
   ): Promise<string> {
     const t = await this.target(appId);
+    await this.plugin.ensureInstalled(t.kubeconfig);
     const name = `${t.ha.cluster}-${this.mintGeneration()}`;
     await this.k8s.serverSideApply(
       t.kubeconfig,

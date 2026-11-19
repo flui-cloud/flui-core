@@ -1,3 +1,4 @@
+import { CNPG_HEALTHY_PHASE } from '../postgres-ha.constants';
 export interface InstancePod {
   name: string;
   node?: string;
@@ -27,7 +28,7 @@ export function primaryPlacement(input: {
   lastMovedAt?: string;
   now: number;
 }): PrimaryPlacement {
-  if (input.phase !== 'Cluster in healthy state') {
+  if (input.phase !== CNPG_HEALTHY_PHASE) {
     return { move: false, reason: 'not healthy' };
   }
   if (input.readyInstances < input.instances) {

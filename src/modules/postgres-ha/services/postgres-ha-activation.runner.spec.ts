@@ -5,6 +5,7 @@ import {
   PostgresHaActivationRunner,
 } from './postgres-ha-activation.runner';
 import { DatabaseHaSpec } from '../postgres-ha.types';
+import { ResourcePair } from '../../shared/utils/resource-quantity.util';
 
 const plan: HaActivationPlan = {
   appId: 'app-1',
@@ -26,6 +27,7 @@ interface Script {
   settlingPolls?: number;
   caughtUp?: boolean;
   promoted?: boolean;
+  sourceResources?: ResourcePair;
 }
 
 function setup(script: Script = {}) {
@@ -68,6 +70,10 @@ function setup(script: Script = {}) {
       if (sql.includes('pg_is_in_recovery')) {
         return script.promoted === false ? 't' : 'f';
       }
+      if (sql.startsWith('GRANT')) calls.push('rewind-grants');
+      if (sql.includes('has_function_privilege')) {
+        return calls.includes('rewind-grants') ? 't' : 'f';
+      }
       return '';
     },
     patchCluster: async (_c, patch) =>
@@ -75,6 +81,7 @@ function setup(script: Script = {}) {
     patchAppService: async () => record('switch-service'),
     scaleSingleInstance: async (n) => record(`scale:${n}`),
     superuserPassword: async () => script.superuserPassword ?? null,
+    sourceResources: async () => script.sourceResources ?? null,
     saveState: async (spec) => {
       states.push(spec);
       calls.push(`state:${spec.state}`);
@@ -176,6 +183,37 @@ describe('moving a database to its highly available cluster', () => {
       enableSuperuserAccess: true,
       superuserSecret: { name: 'orders-db-ha-superuser' },
     });
+  });
+
+  it('lets a former primary rewind and rejoin, granting what the operator grants only to a primary that starts as one', async () => {
+    const { runner, calls } = setup();
+    await runner.run(plan);
+    expect(calls.indexOf('rewind-grants')).toBeGreaterThan(
+      calls.findIndex((c) => c.startsWith('promote:')),
+    );
+    expect(calls.indexOf('rewind-grants')).toBeLessThan(
+      calls.indexOf('switch-service'),
+    );
+  });
+
+  it('runs every instance with the requests and limits of the single instance', async () => {
+    const applied: Array<Record<string, unknown>> = [];
+    const resources = {
+      requests: { cpu: '250m', memory: '256Mi' },
+      limits: { cpu: '2', memory: '2Gi' },
+    };
+    const { runner } = setup({ sourceResources: resources });
+    const ports = (runner as unknown as { ports: HaActivationPorts }).ports;
+    const apply = ports.apply;
+    ports.apply = async (objects) => {
+      applied.push(...objects);
+      return apply(objects);
+    };
+    await runner.run(plan);
+    const cluster = applied.find((o) => o.kind === 'Cluster') as {
+      spec: Record<string, unknown>;
+    };
+    expect(cluster.spec.resources).toEqual(resources);
   });
 
   it('a fence that fails leaves the single instance serving and the activation retryable', async () => {
