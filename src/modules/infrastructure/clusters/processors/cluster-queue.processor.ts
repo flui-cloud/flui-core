@@ -77,6 +77,7 @@ import { MasterEvacuationService } from '../services/master-evacuation.service';
 import { movesSentence } from '../../scaling/engine/drain.core';
 import { retryHeldDelivery } from '../../../common/leadership/held-delivery';
 import { HaCreationPlan } from '../utils/ha-creation-plan.core';
+import { beingDestroyed } from '../utils/cluster-lifecycle.util';
 
 import {
   HaJoined,
@@ -101,17 +102,6 @@ const CREATION_STOP_WAIT_MS = 30 * 60_000;
 const CREATION_STOP_POLL_MS = 10_000;
 
 class CreationCancelled extends Error {}
-
-function beingDestroyed(cluster: ClusterEntity): boolean {
-  return (
-    !!cluster.deletedAt ||
-    [
-      ClusterStatus.DELETING,
-      ClusterStatus.DELETION_FAILED,
-      ClusterStatus.DELETED,
-    ].includes(cluster.status)
-  );
-}
 
 @Processor('infrastructure')
 export class ClusterQueueProcessor {

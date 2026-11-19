@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
+import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { DESTROYED_STATUSES } from '../../infrastructure/clusters/utils/cluster-lifecycle.util';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { ClusterHaService } from '../../cluster-ha/services/cluster-ha.service';
 import { TOPOLOGY_ZONE_LABEL } from '../../providers/core/node-topology';
@@ -28,7 +30,14 @@ export class PrimaryPlacementService {
   async sweep(): Promise<void> {
     const active = await this.apps
       .createQueryBuilder('app')
+      .innerJoin(
+        ClusterEntity,
+        'cluster',
+        'cluster.id = app."clusterId" AND cluster."deletedAt" IS NULL AND cluster.status NOT IN (:...destroyed)',
+        { destroyed: DESTROYED_STATUSES },
+      )
       .where(`app."databaseHa"->>'state' = 'active'`)
+      .andWhere('app."deletedAt" IS NULL')
       .getMany();
     for (const app of active) {
       await this.check(app).catch((err: any) =>

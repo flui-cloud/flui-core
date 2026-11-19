@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'node:crypto';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
+import { beingDestroyed } from '../../infrastructure/clusters/utils/cluster-lifecycle.util';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationsRepository } from '../repositories/applications.repository';
@@ -103,6 +104,10 @@ export class ApplicationReconciliationService {
       where: { id: clusterId },
     });
 
+    if (cluster && beingDestroyed(cluster)) {
+      this.logger.debug(`Cluster ${clusterId} is deleted, skipping refresh`);
+      return;
+    }
     if (!cluster?.kubeconfigEncrypted) {
       this.logger.warn(
         `Cluster ${clusterId} has no kubeconfig, skipping refresh`,
