@@ -83,6 +83,7 @@ export default class DevTunnel extends Command {
     '<%= config.bin %> <%= command.id %> --ports postgres,redis',
     '<%= config.bin %> <%= command.id %> --ports postgres,redis,kube-api,grafana',
     '<%= config.bin %> <%= command.id %> --no-retry',
+    '<%= config.bin %> <%= command.id %> --kube-api-port 16443',
   ];
 
   static readonly flags = {
@@ -97,6 +98,13 @@ export default class DevTunnel extends Command {
         'Reconnect automatically if the SSH session drops. Disable with --no-retry.',
       default: true,
       allowNo: true,
+    }),
+    'kube-api-port': Flags.integer({
+      description:
+        'Local port for the kube-api forward, when 6443 is taken on this machine (point KUBECONFIG_SERVER_OVERRIDE at it).',
+      default: 6443,
+      min: 1,
+      max: 65535,
     }),
     'kill-local': Flags.boolean({
       description:
@@ -155,7 +163,11 @@ export default class DevTunnel extends Command {
       this.exit(1);
       return;
     }
-    const specs = requested.map((p) => FORWARDS[p]);
+    const specs = requested.map((p) =>
+      p === 'kube-api'
+        ? { ...FORWARDS[p], localPort: flags['kube-api-port'] }
+        : FORWARDS[p],
+    );
 
     this.printForwardTable(specs);
 
@@ -166,7 +178,9 @@ export default class DevTunnel extends Command {
     const remoteCommand = this.buildRemoteCommand(specs);
     const sshForwards = specs.map((s) => ({
       localPort: s.localPort,
-      remotePort: s.localPort, // remote side listens on same port via kubectl/loopback
+      // kubectl port-forward listens on the master on the same port as locally;
+      // the kube-API itself always binds 6443 there.
+      remotePort: s.needsKubectl ? s.localPort : s.remotePort,
     }));
 
     const app = await getNestApp();
