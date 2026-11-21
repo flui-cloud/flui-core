@@ -5,6 +5,7 @@ import { SandboxCapacityService } from './sandbox-capacity.service';
 import { SandboxReserveService } from './sandbox-reserve.service';
 import { SandboxTenantService } from './sandbox-tenant.service';
 import { SandboxPrepullService } from './sandbox-prepull.service';
+import { SandboxNoticeService } from './sandbox-notice.service';
 import { SandboxCapacityAlertService } from './sandbox-capacity-alert.service';
 import { SandboxTenantState } from '../entities/sandbox-tenant.entity';
 import { SandboxStorageQuotaService } from './sandbox-storage-quota.service';
@@ -38,6 +39,7 @@ export class SandboxSchedulerService {
     private readonly capacity: SandboxCapacityService,
     private readonly tenants: SandboxTenantService,
     private readonly prepull: SandboxPrepullService,
+    private readonly notice: SandboxNoticeService,
     private readonly capacityAlert: SandboxCapacityAlertService,
     private readonly storageQuotas: SandboxStorageQuotaService,
     @Inject(SANDBOX_CONFIG) private readonly config: SandboxConfig,
@@ -209,6 +211,23 @@ export class SandboxSchedulerService {
       // A cold cache costs seconds; it never costs correctness.
       this.logger.warn(
         `Pre-pull could not be applied: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * The trial notice every guest app sits behind. Often, because a guest app
+   * whose notice is missing is refused rather than served without it.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async keepTrialNotice(): Promise<void> {
+    if (!this.config.enabled) return;
+    if (!(await this.sandboxClusterThere())) return;
+    try {
+      await this.notice.ensure();
+    } catch (error) {
+      this.logger.error(
+        `Trial notice could not be applied: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

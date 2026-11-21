@@ -32,6 +32,8 @@ export interface SandboxConfig {
   provisionStuckMs: number;
   /** Single-node test clusters only. */
   allowMasterPlacement: boolean;
+  /** The page a browser meets before a guest app: its links and how long a visit lasts. */
+  notice: { tryUrl: string; abuseUrl: string | null; minutes: number };
   baseDomain: string;
   /** Pod Security Standard enforced on every guest area. */
   podSecurity: PodSecurityLevel;
@@ -139,6 +141,11 @@ export function loadSandboxConfig(
     recycleUnclaimedMs: hours(num(env.SANDBOX_RECYCLE_UNCLAIMED_HOURS, 48)),
     provisionStuckMs: hours(num(env.SANDBOX_PROVISION_STUCK_HOURS, 1)),
     allowMasterPlacement: env.SANDBOX_ALLOW_MASTER_PLACEMENT === 'true',
+    notice: {
+      tryUrl: env.SANDBOX_NOTICE_TRY_URL ?? 'https://flui.cloud',
+      abuseUrl: env.SANDBOX_NOTICE_ABUSE_URL ?? null,
+      minutes: num(env.SANDBOX_NOTICE_MINUTES, 60),
+    },
     baseDomain: env.SANDBOX_BASE_DOMAIN ?? 'try.flui.cloud',
     podSecurity: POD_SECURITY_LEVELS.has(
       env.SANDBOX_POD_SECURITY as PodSecurityLevel,

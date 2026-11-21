@@ -9,6 +9,7 @@ import {
   workloadDeadline,
 } from '../sandbox.config';
 import { SandboxNoticeMailService } from './sandbox-notice-mail.service';
+import { SandboxNoticeService } from './sandbox-notice.service';
 import { SandboxEntryService } from './sandbox-entry.service';
 import { isPlaceholderEmail } from '../../auth/utils/placeholder-email.util';
 import { ProjectsService } from '../../projects/projects.service';
@@ -31,7 +32,6 @@ import { UserManagementService } from '../../auth/services/user-management.servi
 import { ApiKeyEntity } from '../../auth/entities/api-key.entity';
 import { IamRoleBindingEntity } from '../../iam/entities/iam-role-binding.entity';
 import { IAM_ROLE } from '../../iam/constants/iam-roles';
-import { SHOWCASE_GRANT } from '../../iam/constants/iam-showcase';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
@@ -89,6 +89,7 @@ export class SandboxTenantService {
     private readonly egress: EgressPolicyService,
     private readonly githubTokens: GitHubTokensForgetService,
     private readonly registry: FluiRegistryPublisherService,
+    private readonly trialNotice: SandboxNoticeService,
   ) {}
 
   /**
@@ -138,6 +139,7 @@ export class SandboxTenantService {
         kubeconfig,
         buildNoindexMiddleware(tenant.namespace),
       );
+      await this.trialNotice.applyTo(kubeconfig, tenant.namespace);
       timeline.mark('namespace');
 
       // Before anyone is let in, because the first application a guest deploys

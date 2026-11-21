@@ -41,6 +41,7 @@ import { GatewayMiddlewareCompilerService } from './gateway-middleware-compiler.
 import { describeError } from '../../shared/utils/error.util';
 import { SandboxTenantEntity } from '../../sandbox/entities/sandbox-tenant.entity';
 import { sandboxNoindexMiddlewareRef } from '../../sandbox/constants/sandbox-noindex';
+import { sandboxNoticeMiddlewareRef } from '../../sandbox/constants/sandbox-notice.manifest';
 import { ENDPOINT_ID_LABEL } from '../constants/endpoint-labels';
 import { invalidGatewayCidrs } from '../validators/gateway-cidr.validator';
 import {
@@ -1703,11 +1704,10 @@ export class AppEndpointReconciliationService {
       endpoint,
       cluster,
     );
-    const noindexMiddlewareRef =
-      await this.sandboxNoindexMiddlewareRef(endpoint);
+    const sandboxRefs = await this.sandboxMiddlewareRefs(endpoint);
     const middlewareRefs = [
       ...(traefikMiddlewareRef ? [traefikMiddlewareRef] : []),
-      ...(noindexMiddlewareRef ? [noindexMiddlewareRef] : []),
+      ...sandboxRefs,
       ...gateway.refs,
     ];
 
@@ -1836,16 +1836,22 @@ export class AppEndpointReconciliationService {
     }
   }
 
-  private async sandboxNoindexMiddlewareRef(
+  /** A guest app meets the trial notice first and is never indexed. */
+  private async sandboxMiddlewareRefs(
     endpoint: AppEndpointEntity,
-  ): Promise<string | null> {
+  ): Promise<string[]> {
     const sandbox = await this.sandboxTenants.exists({
       where: {
         clusterId: endpoint.clusterId,
         namespace: endpoint.k8sNamespace,
       },
     });
-    return sandbox ? sandboxNoindexMiddlewareRef(endpoint.k8sNamespace) : null;
+    return sandbox
+      ? [
+          sandboxNoticeMiddlewareRef(endpoint.k8sNamespace),
+          sandboxNoindexMiddlewareRef(endpoint.k8sNamespace),
+        ]
+      : [];
   }
 
   /**

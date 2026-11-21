@@ -24,6 +24,7 @@ describe('sandbox clocks when their cluster is gone', () => {
       capacity as any,
       tenants as any,
       prepull as any,
+      { ensure: jest.fn() } as any,
       alert as any,
       quotas as any,
       { enabled: true, clusterId: 'gone-1' } as any,

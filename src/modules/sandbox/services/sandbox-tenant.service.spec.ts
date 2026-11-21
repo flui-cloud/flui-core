@@ -265,6 +265,11 @@ const build = (
         calls.push(`forget-images:${app.id}`);
       },
     } as never,
+    {
+      applyTo: async () => {
+        calls.push('trial-notice');
+      },
+    } as never,
   );
   return { service, calls, marks, namespaceLabels, recorded };
 };
@@ -283,6 +288,7 @@ describe('SandboxTenantService.provision', () => {
       // The way out is the cluster's rule, written as the area is built.
       'egress-isolated',
       'noindex',
+      'trial-notice',
       // Before anyone is let in: the first application a guest deploys creates
       // the endpoint that carries the name, and a hostname is written once.
       'shared-subdomain',

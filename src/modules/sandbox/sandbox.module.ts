@@ -55,6 +55,7 @@ import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxQuotaService } from './services/sandbox-quota.service';
 import { SandboxScopeService } from './services/sandbox-scope.service';
 import { SandboxPrepullService } from './services/sandbox-prepull.service';
+import { SandboxNoticeService } from './services/sandbox-notice.service';
 import { SandboxCpuAlertService } from './services/sandbox-cpu-alert.service';
 import { SandboxNoticeMailService } from './services/sandbox-notice-mail.service';
 import { SandboxWaitlistService } from './services/sandbox-waitlist.service';
@@ -144,6 +145,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     SandboxEntryService,
     SandboxQuotaService,
     SandboxPrepullService,
+    SandboxNoticeService,
     SandboxCapacityAlertService,
     SandboxCpuAlertService,
     SandboxNoticeMailService,

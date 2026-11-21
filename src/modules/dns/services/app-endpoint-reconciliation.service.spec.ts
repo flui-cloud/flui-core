@@ -177,7 +177,7 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
     );
   });
 
-  it('references noindex only for endpoints in a sandbox tenancy', async () => {
+  it('sends only endpoints in a sandbox tenancy through the trial notice and noindex', async () => {
     const endpoint = {
       clusterId: 'cluster-1',
       k8sNamespace: 'user-guest-abc123',
@@ -185,16 +185,15 @@ describe('AppEndpointReconciliationService.writePrimaryRecord', () => {
     const resolve = (service: AppEndpointReconciliationService) =>
       (
         service as unknown as {
-          sandboxNoindexMiddlewareRef: (
-            value: typeof endpoint,
-          ) => Promise<string | null>;
+          sandboxMiddlewareRefs: (value: typeof endpoint) => Promise<string[]>;
         }
-      ).sandboxNoindexMiddlewareRef(endpoint);
+      ).sandboxMiddlewareRefs(endpoint);
 
-    await expect(resolve(build(defaults(), true))).resolves.toBe(
+    await expect(resolve(build(defaults(), true))).resolves.toEqual([
+      'user-guest-abc123-sandbox-notice@kubernetescrd',
       'user-guest-abc123-sandbox-noindex@kubernetescrd',
-    );
-    await expect(resolve(build(defaults(), false))).resolves.toBeNull();
+    ]);
+    await expect(resolve(build(defaults(), false))).resolves.toEqual([]);
   });
 });
 
