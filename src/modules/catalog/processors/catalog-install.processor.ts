@@ -34,10 +34,12 @@ import {
   CatalogCompanion,
   CatalogCompanions,
   CatalogDomainSpec,
+  CatalogSpec,
   CatalogSpecStandalone,
   CatalogSpecBuildingBlock,
   CatalogSpecComposed,
   CatalogComponent,
+  CatalogConfigFile,
   CatalogPostInstallStep,
   CatalogEnvVar,
   CatalogHealthcheck,
@@ -67,6 +69,13 @@ import { CatalogSecretGeneratorService } from '../services/catalog-secret-genera
 import { BlockConnectionUrlService } from '../services/block-connection-url.service';
 import { DbPoolerService } from '../services/db-pooler.service';
 import { isOptionOn, poolerChoice } from '../utils/catalog-options.util';
+import {
+  DEFAULT_CERTIFICATE_DAYS,
+  DEFAULT_KEY_BITS,
+  isBcrypt,
+  isCertificate,
+  isGeneratedKey,
+} from '../utils/catalog-key-material';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
 import {
   CATALOG_INSTALL_QUEUE,
@@ -85,7 +94,7 @@ import { OidcProviderAdminClient } from '../../oidc/services/oidc-provider-admin
 import { ClusterEntity } from '../../infrastructure/clusters/entities/cluster.entity';
 import { buildSystemNipHostname } from '../../dns/utils/nip-hostname.util';
 import { stripTrailingSlashes } from '../../../common/utils/url.util';
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { KubernetesService } from '../../infrastructure/shared/services/kubernetes.service';
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { EndpointModeResolverService } from '../../dns/services/endpoint-mode-resolver.service';
@@ -119,6 +128,13 @@ interface OidcWireResult {
   issuerUrl: string;
   clientId: string;
   clientSecret: string;
+}
+
+/** Six lowercase base-36 characters, the suffix `ApplicationService` appends when it picks a slug itself. */
+export function shortSlugSuffix(): string {
+  return randomInt(36 ** 6)
+    .toString(36)
+    .padStart(6, '0');
 }
 
 function renderPlaceholders(
@@ -309,10 +325,19 @@ export class CatalogInstallProcessor {
         OperationStep.CATALOG_INSTALL_RESOLVE_TEMPLATES,
       );
 
+      // The application's slug is the one its objects are named after, and a
+      // template saying `{{app.slug}}` means them; chosen here, before the
+      // templates resolve, so the two agree.
+      const alreadyCreated = await this.applicationRepo.findByCatalogInstall(
+        install.id,
+      );
+      const applicationSlug =
+        alreadyCreated[0]?.slug ?? `${install.slug}-${shortSlugSuffix()}`;
       const ctx = this.buildTemplateContext(
         install,
         resolvedEnv,
         placement.namespace,
+        applicationSlug,
       );
       ctx.deps = Object.fromEntries(
         depResolution.resolved.map((d) => [
@@ -349,14 +374,12 @@ export class CatalogInstallProcessor {
         await this.allowMasterPlacementFor(install),
       );
       dto.projectId = placement.project.id;
+      dto.slug = applicationSlug;
       // Re-entrant, because this handler can be delivered twice: `attempts: 1`
       // stops a retry after an error, not a stalled job handed to the next
       // worker when this one dies — and a platform update restarts the API.
       // Measured: one install, one COMPLETED operation, two applications with a
       // pod and a volume each. The composed path below already guards this way.
-      const alreadyCreated = await this.applicationRepo.findByCatalogInstall(
-        install.id,
-      );
       const application =
         alreadyCreated[0] ??
         (await this.applicationService.create(
@@ -452,6 +475,8 @@ export class CatalogInstallProcessor {
           await this.maybeCreateEndpoint(install, application.id, spec);
         }
       }
+
+      await this.maybeRunPostInstall(install, spec, application.id, null);
 
       await this.updateOperation(
         operationId,
@@ -626,6 +651,21 @@ export class CatalogInstallProcessor {
     for (const e of envSpec) {
       const override = install.envOverrides?.[e.name];
 
+      if (isGeneratedKey(e.valueFrom)) {
+        out.push({
+          name: e.name,
+          value: this.secretGenerator.rsaPrivateKey(
+            e.valueFrom.bits ?? DEFAULT_KEY_BITS,
+            e.valueFrom.format ?? 'pkcs8',
+          ),
+          secret: true,
+        });
+        continue;
+      }
+      if (isCertificate(e.valueFrom) || isBcrypt(e.valueFrom)) {
+        out.push({ name: e.name, value: '', secret: true });
+        continue;
+      }
       if (e.valueFrom && 'generate' in e.valueFrom) {
         out.push({
           name: e.name,
@@ -656,18 +696,100 @@ export class CatalogInstallProcessor {
       const rawValue = override ?? e.value ?? '';
       out.push({ name: e.name, value: rawValue, secret: !!e.secret });
     }
+    this.deriveValues(envSpec, install, out);
     return out;
+  }
+
+  /**
+   * Config files are stored as written, so they may name hosts and addresses
+   * but never read a variable: secrets stay in the encrypted env.
+   */
+  private renderConfigFiles(
+    files: CatalogConfigFile[],
+    ctx: TemplateContext,
+  ): CatalogConfigFile[] {
+    const withoutEnv = (
+      c: TemplateComponentContext,
+    ): TemplateComponentContext => ({
+      ...c,
+      env: {},
+    });
+    const addressesOnly: TemplateContext = {
+      app: ctx.app,
+      env: {},
+      self: ctx.self && withoutEnv(ctx.self),
+      components: Object.fromEntries(
+        Object.entries(ctx.components ?? {}).map(([name, c]) => [
+          name,
+          withoutEnv(c),
+        ]),
+      ),
+    };
+    return files.map((f) => ({
+      ...f,
+      content: this.templateResolver.resolve(f.content, addressesOnly),
+    }));
+  }
+
+  /** The env a reused component was created with: its generated values are not regenerated. */
+  private persistedEnv(app: ApplicationEntity): Record<string, string> {
+    return Object.fromEntries(
+      (app.env ?? [])
+        .filter((e) => !e.externalSecretRef)
+        .map((e) => [e.name, e.secret ? this.decryptStored(e.value) : e.value]),
+    );
+  }
+
+  private decryptStored(value: string): string {
+    try {
+      return this.encryptionService.decrypt(value);
+    } catch {
+      return value;
+    }
+  }
+
+  private deriveValues(
+    envSpec: CatalogEnvVar[],
+    install: CatalogInstallEntity,
+    out: ResolvedEnv[],
+  ): void {
+    const byName = new Map(out.map((e) => [e.name, e]));
+    for (const e of envSpec) {
+      if (isBcrypt(e.valueFrom)) {
+        const source = byName.get(e.valueFrom.bcryptOf)?.value;
+        if (!source) {
+          throw new Error(
+            `${e.name}: bcryptOf "${e.valueFrom.bcryptOf}" has no value to hash`,
+          );
+        }
+        byName.get(e.name)!.value = this.secretGenerator.bcrypt(source);
+        continue;
+      }
+      if (!isCertificate(e.valueFrom)) continue;
+      const key = byName.get(e.valueFrom.certificateFor)?.value;
+      if (!key) {
+        throw new Error(
+          `${e.name}: certificateFor "${e.valueFrom.certificateFor}" names no generated key`,
+        );
+      }
+      byName.get(e.name)!.value = this.secretGenerator.certificate(
+        key,
+        e.valueFrom.commonName ?? install.slug,
+        e.valueFrom.validDays ?? DEFAULT_CERTIFICATE_DAYS,
+      );
+    }
   }
 
   private buildTemplateContext(
     install: CatalogInstallEntity,
     env: ResolvedEnv[],
     namespace: string,
+    applicationSlug: string = install.slug,
   ): TemplateContext {
     return {
       app: {
         id: install.slug,
-        slug: install.slug,
+        slug: applicationSlug,
         domain: install.requestedDomain,
         namespace,
       },
@@ -1525,6 +1647,7 @@ export class CatalogInstallProcessor {
           substituted,
           await this.allowMasterPlacementFor(install),
         );
+        Object.assign(dto, this.configFilesOf(component, componentCtx));
         dto.projectId = placement.project.id;
         application = await this.applicationService.create(
           install.clusterId,
@@ -1585,7 +1708,7 @@ export class CatalogInstallProcessor {
       // readiness), so still expose the component to later template contexts.
       ctx.components[component.name] = {
         host: `${application.slug}-svc.${namespace}.svc.cluster.local`,
-        env: Object.fromEntries(substituted.map((e) => [e.name, e.value])),
+        env: this.lentEnv(reused, substituted),
         fqdn: componentFqdns[component.name],
       };
     }
@@ -1637,6 +1760,7 @@ export class CatalogInstallProcessor {
         primaryAppId,
         oidc,
         ctx.components,
+        appIdByComponent,
       );
     }
 
@@ -1706,7 +1830,7 @@ export class CatalogInstallProcessor {
 
   private isOptionEnabled(
     install: CatalogInstallEntity,
-    spec: CatalogSpecComposed | CatalogSpecBuildingBlock,
+    spec: CatalogSpec,
     key: string,
   ): boolean {
     return isOptionOn(spec, install.options, key);
@@ -2058,10 +2182,11 @@ export class CatalogInstallProcessor {
 
   private async maybeRunPostInstall(
     install: CatalogInstallEntity,
-    spec: CatalogSpecComposed,
+    spec: CatalogSpec,
     primaryAppId: string,
     oidc: OidcWireResult | null,
     components: Record<string, TemplateComponentContext> = {},
+    appIdByComponent: Map<string, string> = new Map(),
   ): Promise<void> {
     const steps = spec.postInstall ?? [];
     if (!steps.length) return;
@@ -2070,6 +2195,52 @@ export class CatalogInstallProcessor {
     const fresh = await this.installRepo.findById(install.id);
     const fqdn = fresh?.resolvedFqdn ?? '';
 
+    const ctx = this.postInstallContext(install, fqdn, oidc, components);
+    const render = (s: string): string =>
+      renderPlaceholders(s, (k) => ctx[k.trim()] ?? '');
+
+    for (const step of steps) {
+      if (!this.postInstallStepMatches(step, mode, install, spec)) continue;
+      if (step.exec) {
+        const target = this.postInstallTarget(
+          install,
+          step,
+          primaryAppId,
+          appIdByComponent,
+        );
+        if (target)
+          await this.runPostInstallExec(install, target, step, render);
+      } else if (step.http) {
+        await this.runPostInstallHttp(install, fqdn, step, render);
+      }
+    }
+  }
+
+  private configFilesOf(
+    component: CatalogComponent,
+    ctx: TemplateContext,
+  ): { configFiles?: CatalogConfigFile[] } {
+    return component.configFiles?.length
+      ? { configFiles: this.renderConfigFiles(component.configFiles, ctx) }
+      : {};
+  }
+
+  /** What a component lends later ones: what it was created with, when a previous run created it. */
+  private lentEnv(
+    reused: ApplicationEntity | undefined,
+    substituted: Array<{ name: string; value: string }>,
+  ): Record<string, string> {
+    return reused
+      ? this.persistedEnv(reused)
+      : Object.fromEntries(substituted.map((e) => [e.name, e.value]));
+  }
+
+  private postInstallContext(
+    install: CatalogInstallEntity,
+    fqdn: string,
+    oidc: OidcWireResult | null,
+    components: Record<string, TemplateComponentContext>,
+  ): Record<string, string> {
     const ctx: Record<string, string> = {
       'install.userEmail': install.userEmail ?? '',
       'install.resolvedFqdn': fqdn,
@@ -2086,17 +2257,24 @@ export class CatalogInstallProcessor {
       if (c.host) ctx[`components.${name}.host`] = c.host;
       if (c.fqdn) ctx[`components.${name}.fqdn`] = c.fqdn;
     }
-    const render = (s: string): string =>
-      renderPlaceholders(s, (k) => ctx[k.trim()] ?? '');
+    return ctx;
+  }
 
-    for (const step of steps) {
-      if (!this.postInstallStepMatches(step, mode, install, spec)) continue;
-      if (step.exec) {
-        await this.runPostInstallExec(install, primaryAppId, step, render);
-      } else if (step.http) {
-        await this.runPostInstallHttp(install, fqdn, step, render);
-      }
+  private postInstallTarget(
+    install: CatalogInstallEntity,
+    step: CatalogPostInstallStep,
+    primaryAppId: string,
+    appIdByComponent: Map<string, string>,
+  ): string | undefined {
+    const component = step.exec?.component;
+    if (!component) return primaryAppId;
+    const target = appIdByComponent.get(component);
+    if (!target) {
+      this.logger.warn(
+        `Install ${install.id}: postInstall "${step.name}" names component "${component}", which this install does not have — skipping`,
+      );
     }
+    return target;
   }
 
   private async runPostInstallHttp(
@@ -2203,7 +2381,7 @@ export class CatalogInstallProcessor {
     step: CatalogPostInstallStep,
     mode: string,
     install: CatalogInstallEntity,
-    spec: CatalogSpecComposed,
+    spec: CatalogSpec,
   ): boolean {
     const authGate = step.when?.authMode;
     if (authGate !== undefined) {

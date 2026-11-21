@@ -1,6 +1,16 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { validate as fluiValidate, catalogAppSchema } from '@flui-cloud/spec';
-import { CatalogManifest } from '../interfaces/catalog-manifest.interface';
+import {
+  CatalogEnvVar,
+  CatalogManifest,
+} from '../interfaces/catalog-manifest.interface';
+import {
+  isKeyMaterial,
+  keyMaterialProblems,
+} from '../utils/catalog-key-material';
+import { configFileTemplateProblems } from '../utils/catalog-config-file-templates';
+
+const KEY_MATERIAL_PLACEHOLDER = { generate: 'secret', length: 32 };
 
 @Injectable()
 export class CatalogSchemaValidatorService {
@@ -49,7 +59,74 @@ export class CatalogSchemaValidatorService {
     }
     const manifest = result.manifest as unknown as CatalogManifest;
     this.reattachForwardCompatFields(manifest, stripped.byPath);
+    this.assertKeyMaterial(manifest);
     return manifest;
+  }
+
+  private envLists(
+    spec: Record<string, unknown>,
+  ): Array<{ path: string; env: CatalogEnvVar[] }> {
+    const lists: Array<{ path: string; env: CatalogEnvVar[] }> = [];
+    if (Array.isArray(spec.env)) {
+      lists.push({ path: 'spec', env: spec.env as CatalogEnvVar[] });
+    }
+    const components = spec.components;
+    if (Array.isArray(components)) {
+      components.forEach((c: { env?: unknown }, i) => {
+        if (Array.isArray(c?.env)) {
+          lists.push({
+            path: `spec.components[${i}]`,
+            env: c.env as CatalogEnvVar[],
+          });
+        }
+      });
+    }
+    return lists;
+  }
+
+  private stripKeyMaterial(
+    spec: Record<string, unknown>,
+    byPath: Map<string, unknown>,
+  ): void {
+    for (const { path, env } of this.envLists(spec)) {
+      env.forEach((e, i) => {
+        if (!isKeyMaterial(e.valueFrom)) return;
+        byPath.set(`${path}.env[${i}]::valueFrom`, e.valueFrom);
+        (e as { valueFrom: unknown }).valueFrom = KEY_MATERIAL_PLACEHOLDER;
+      });
+    }
+  }
+
+  private reattachKeyMaterial(
+    spec: Record<string, unknown>,
+    byPath: Map<string, unknown>,
+  ): void {
+    for (const { path, env } of this.envLists(spec)) {
+      env.forEach((e, i) => {
+        const original = byPath.get(`${path}.env[${i}]::valueFrom`);
+        if (original !== undefined) {
+          (e as { valueFrom: unknown }).valueFrom = original;
+        }
+      });
+    }
+  }
+
+  private assertKeyMaterial(manifest: CatalogManifest): void {
+    const spec = manifest.spec as unknown as Record<string, unknown>;
+    const errors = [
+      ...this.envLists(spec).flatMap(({ path, env }) =>
+        keyMaterialProblems(env, path),
+      ),
+      ...(Array.isArray(spec.components)
+        ? configFileTemplateProblems(spec.components)
+        : []),
+    ];
+    if (errors.length) {
+      throw new BadRequestException({
+        message: 'Invalid catalog manifest',
+        errors,
+      });
+    }
   }
 
   private stripForwardCompatFields(parsed: unknown): {
@@ -73,6 +150,8 @@ export class CatalogSchemaValidatorService {
         }
       }
       this.stripOidcForwardCompat(spec, byPath);
+      this.stripPostInstallComponent(spec, byPath);
+      this.stripKeyMaterial(spec, byPath);
       const components = (spec as { components?: unknown[] }).components;
       if (Array.isArray(components)) {
         components.forEach((c, i) => {
@@ -114,6 +193,8 @@ export class CatalogSchemaValidatorService {
       if (v !== undefined) spec[field] = v;
     }
     this.reattachOidcForwardCompat(spec, byPath);
+    this.reattachPostInstallComponent(spec, byPath);
+    this.reattachKeyMaterial(spec, byPath);
     const components = (spec as { components?: unknown[] }).components;
     if (Array.isArray(components)) {
       components.forEach((c, i) => {
@@ -169,6 +250,39 @@ export class CatalogSchemaValidatorService {
         delete oidc[field];
       }
     }
+  }
+
+  private postInstallExecs(
+    spec: Record<string, unknown>,
+  ): Array<Record<string, unknown> | null> {
+    const steps = spec.postInstall;
+    if (!Array.isArray(steps)) return [];
+    return steps.map((s: { exec?: unknown }) =>
+      s?.exec && typeof s.exec === 'object'
+        ? (s.exec as Record<string, unknown>)
+        : null,
+    );
+  }
+
+  private stripPostInstallComponent(
+    spec: Record<string, unknown>,
+    byPath: Map<string, unknown>,
+  ): void {
+    this.postInstallExecs(spec).forEach((exec, i) => {
+      if (!exec || !('component' in exec)) return;
+      byPath.set(`spec.postInstall[${i}].exec::component`, exec.component);
+      delete exec.component;
+    });
+  }
+
+  private reattachPostInstallComponent(
+    spec: Record<string, unknown>,
+    byPath: Map<string, unknown>,
+  ): void {
+    this.postInstallExecs(spec).forEach((exec, i) => {
+      const v = byPath.get(`spec.postInstall[${i}].exec::component`);
+      if (exec && v !== undefined) exec.component = v;
+    });
   }
 
   private reattachOidcForwardCompat(

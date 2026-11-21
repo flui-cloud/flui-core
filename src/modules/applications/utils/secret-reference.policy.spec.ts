@@ -81,6 +81,18 @@ describe('which Secrets an application may read', () => {
     ).toEqual([]);
     expect(
       secretReferenceProblems(
+        app(companions('{{app.slug}}-binlog-shipper')),
+        neighbours,
+      ),
+    ).toEqual([]);
+    expect(
+      secretReferenceProblems(
+        app(companions('{{app.slug}}x-secret')),
+        neighbours,
+      ),
+    ).toHaveLength(2);
+    expect(
+      secretReferenceProblems(
         app(companions('wildcard-example-com-tls')),
         neighbours,
       ),

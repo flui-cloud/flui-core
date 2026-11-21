@@ -301,13 +301,15 @@ export interface CatalogPostInstallStep {
   exec?: {
     command: string[];
     container?: string;
+    /** Component of a composed entry whose pod runs the command; the primary one when absent. */
+    component?: string;
   };
 }
 
 /**
  * The data engine a component/block speaks — drives the dashboard's Access tab and console
- * routing. Declared, never inferred from the image or the component name: immich's `redis`
- * component actually runs valkey/valkey, and umami's web image is tagged `postgresql-*`.
+ * routing. Declared, never inferred from the image or the component name: ferretdb's `db`
+ * component runs ferretdb/postgres-documentdb and speaks postgres.
  * Superset of the console-capable `DbEngine`; the rest only get connection details.
  */
 export type CatalogDbEngine =
@@ -444,6 +446,9 @@ export interface CatalogEnvVar {
 
 export type CatalogValueFrom =
   | CatalogValueFromGenerate
+  | CatalogValueFromGeneratedKey
+  | CatalogValueFromCertificate
+  | CatalogValueFromBcrypt
   | CatalogValueFromSecretRef
   | CatalogValueFromUserInput;
 
@@ -453,10 +458,30 @@ export interface CatalogValueFromGenerate {
   /**
    * Encoding of the generated secret. Default is `base64url` (URL-safe
    * alphabet, ~190 bits of entropy at length=32). Use `hex` when the
-   * consuming app expects a strict hex-only string (e.g. Homarr's
-   * SECRET_ENCRYPTION_KEY is validated against `/^[0-9a-f]{64}$/`).
+   * consuming app expects a strict hex-only string (e.g. Umami's
+   * TWO_FACTOR_ENCRYPTION_KEY is 64 hex characters).
    */
   format?: 'base64url' | 'hex';
+}
+
+/** An RSA private key generated once per install, PEM. */
+export interface CatalogValueFromGeneratedKey {
+  generate: 'rsa-private-key';
+  bits?: 2048 | 3072 | 4096;
+  /** `pkcs8` (default) or `pkcs1`, for software that reads only `BEGIN RSA PRIVATE KEY`. */
+  format?: 'pkcs8' | 'pkcs1';
+}
+
+/** A self-signed certificate for the generated key of another variable of the same component. */
+export interface CatalogValueFromCertificate {
+  certificateFor: string;
+  commonName?: string;
+  validDays?: number;
+}
+
+/** The bcrypt hash of a generated or entered secret of the same component, e.g. for an htpasswd file. */
+export interface CatalogValueFromBcrypt {
+  bcryptOf: string;
 }
 
 export interface CatalogValueFromSecretRef {

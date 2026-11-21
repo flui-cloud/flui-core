@@ -129,6 +129,14 @@ const DATA_DIR_MARKERS: ReadonlyArray<DataDirMarker> = [
     path: '*/core/_seal-config',
     liveCopy: 'crash-consistent',
   },
+  // OpenBao 2.7 and later store on Raft, whose bbolt files rewrite pages in
+  // place the way LMDB does.
+  {
+    engine: 'raft',
+    path: '*/raft/raft.db',
+    liveCopy: 'not-restorable',
+    alsoDetects: ['openbao'],
+  },
   // LMDB writes pages in place: a torn `data.mdb` is MDB_CORRUPTED and the
   // engine will not open it. There is no partial recovery to attempt.
   {

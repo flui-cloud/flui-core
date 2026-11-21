@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ApplicationEntity } from '../entities/application.entity';
+import { fillAppSlug } from './app-slug-placeholder';
 
 type Owned = Pick<
   ApplicationEntity,
@@ -50,7 +51,7 @@ export function secretReferenceProblems(
     }
   }
   const own = (name: string) =>
-    name.replaceAll('{{SLUG}}', app.slug).startsWith(`${app.slug}-`);
+    fillAppSlug(name, app.slug).startsWith(`${app.slug}-`);
   const companions = app.companions;
   for (const s of [
     ...(companions?.initContainers ?? []),

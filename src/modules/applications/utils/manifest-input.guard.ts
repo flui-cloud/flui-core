@@ -4,6 +4,7 @@ import type {
   CompanionsSpec,
   SidecarSpec,
 } from '../services/application-manifest-generator.service';
+import { fillAppSlug } from './app-slug-placeholder';
 
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 const DNS_SUBDOMAIN = /^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/;
@@ -188,7 +189,7 @@ function checkSidecar(
 
 function checkCompanions(app: GuardedApp, f: Findings): void {
   const companions = app.companions;
-  const filled = (name: string) => name.replaceAll('{{SLUG}}', app.slug ?? '');
+  const filled = (name: string) => fillAppSlug(name, app.slug ?? '');
   for (const s of [
     ...(companions?.initContainers ?? []),
     ...(companions?.sidecars ?? []),

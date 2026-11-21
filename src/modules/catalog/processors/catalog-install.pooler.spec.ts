@@ -160,4 +160,24 @@ describe('a PostgreSQL install and its pooler', () => {
     expect(calls).not.toContain('pooler written');
     expect(self.poolers.bringUp).not.toHaveBeenCalled();
   });
+
+  it('names the application before resolving templates, so {{app.slug}} is its own slug', async () => {
+    const { self, done } = run({ pooler: false, poolerSessionMode: false });
+    await done;
+    const dto = self.applicationService.create.mock.calls[0][1];
+    expect(dto.slug).toMatch(/^postgresql-ab12-[a-z0-9]{6}$/);
+  });
+
+  it('keeps the slug of an application a previous run already created', async () => {
+    const earlier = {
+      id: 'app-1',
+      name: 'postgresql-ab12',
+      slug: 'postgresql-ab12-zz9999',
+      env: [],
+      pooler: null,
+    };
+    const { self, done } = run({}, [earlier]);
+    await done;
+    expect(self.applicationService.create).not.toHaveBeenCalled();
+  });
 });
