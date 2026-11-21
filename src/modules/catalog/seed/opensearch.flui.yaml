@@ -18,9 +18,9 @@ metadata:
     - elasticsearch-compatible
     - building-block
   license: Apache-2.0
-  version: '2'
-  maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/opensearch.svg
+  version: '3'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/opensearch.svg
   links:
     website: https://opensearch.org
     docs: https://opensearch.org/docs/latest/
@@ -37,7 +37,7 @@ spec:
   image:
     registry: docker.io
     repository: opensearchproject/opensearch
-    tag: '2'
+    tag: '3'
 
   # Re-invoke the image's own entrypoint (keeps the security/admin-password bootstrap) and pass
   # single-node mode as a -E setting — `discovery.type` can't be a K8s env var name (dots), and

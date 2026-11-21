@@ -19,9 +19,9 @@ metadata:
     - backups
     - building-block
   license: AGPL-3.0
-  version: '2.3.0'
-  maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/garage.svg
+  version: '2.5.0'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/garage.svg
   links:
     website: https://garagehq.deuxfleurs.fr
     docs: https://garagehq.deuxfleurs.fr/documentation/
@@ -39,7 +39,7 @@ spec:
   image:
     registry: docker.io
     repository: dxflrs/garage
-    tag: v2.3.0
+    tag: v2.5.0
 
   # Garage ships distroless (no /bin/sh), so the start command is exec-form argv,
   # not a shell string. --single-node bootstraps the cluster layout; --default-bucket

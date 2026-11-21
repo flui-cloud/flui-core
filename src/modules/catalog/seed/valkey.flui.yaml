@@ -17,9 +17,9 @@ metadata:
     - building-block
     - redis-compatible
   license: BSD-3-Clause
-  version: '8'
-  maintainedAt: '2026-06-13'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/valkey.svg
+  version: '9'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/valkey.svg
   links:
     website: https://valkey.io
     docs: https://valkey.io/topics/
@@ -32,7 +32,7 @@ spec:
   image:
     registry: docker.io
     repository: valkey/valkey
-    tag: '8-alpine'
+    tag: '9-alpine'
 
   ports:
     - name: valkey
@@ -56,6 +56,10 @@ spec:
         length: 32
     - name: REDISCLI_AUTH
       value: '{{env.VALKEY_PASSWORD}}'
+
+  # The image does not read VALKEY_PASSWORD: without --requirepass the server
+  # accepts anyone and refuses the AUTH its clients send.
+  startCommand: exec valkey-server --requirepass "$VALKEY_PASSWORD"
 
   resources:
     requests:

@@ -22,7 +22,7 @@ metadata:
   license: PostgreSQL
   version: 'pg17'
   maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/postgresql.svg
   links:
     website: https://github.com/pgvector/pgvector
     docs: https://github.com/pgvector/pgvector#getting-started

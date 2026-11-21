@@ -44,11 +44,11 @@ describe('CatalogSchemaValidatorService', () => {
     });
 
     it('records the engine a component really speaks, not what its name says', () => {
-      const manifest = service.validate(seed('immich.flui.yaml'));
+      const manifest = service.validate(seed('ferretdb.flui.yaml'));
       const spec = manifest.spec as CatalogSpecComposed;
-      const cache = spec.components.find((c) => c.name === 'redis');
-      expect(cache?.image.repository).toBe('valkey/valkey');
-      expect(cache?.engine).toBe('valkey');
+      const db = spec.components.find((c) => c.name === 'db');
+      expect(db?.image.repository).toBe('ferretdb/postgres-documentdb');
+      expect(db?.engine).toBe('postgres');
     });
   });
 
@@ -74,7 +74,6 @@ describe('CatalogSchemaValidatorService', () => {
   it('validates every seed that declares an engine', () => {
     const files = [
       'umami.flui.yaml',
-      'immich.flui.yaml',
       'nextcloud.flui.yaml',
       'penpot.flui.yaml',
       'twenty.flui.yaml',
@@ -92,10 +91,137 @@ describe('CatalogSchemaValidatorService', () => {
     }
   });
 
+  it('keeps the component a post-install command runs in', () => {
+    const manifest = service.validate(seed('penpot.flui.yaml'));
+    const steps = (manifest.spec as CatalogSpecComposed).postInstall;
+    expect(steps?.map((s) => [s.name, s.exec?.component])).toEqual([
+      ['create-admin', 'backend'],
+    ]);
+  });
+
   it('keeps the pull policy of an image whose tag moves', () => {
     const manifest = service.validate(seed('postgresql.flui.yaml'));
     expect(
       (manifest.spec as { imagePullPolicy?: string }).imagePullPolicy,
     ).toBe('Always');
+  });
+
+  describe('generated key material', () => {
+    const withEnv = (env: unknown[]) => {
+      const manifest = seed('umami.flui.yaml') as {
+        spec: { components: Array<{ name: string; env: unknown[] }> };
+      };
+      manifest.spec.components.find((c) => c.name === 'umami')!.env = env;
+      return manifest;
+    };
+
+    it('keeps a generated key and the certificate made from it', () => {
+      const manifest = service.validate(
+        withEnv([
+          {
+            name: 'KEY',
+            valueFrom: { generate: 'rsa-private-key', bits: 4096 },
+          },
+          {
+            name: 'CERT',
+            valueFrom: {
+              certificateFor: 'KEY',
+              commonName: 'ca',
+              validDays: 365,
+            },
+          },
+        ]),
+      );
+      const env = (manifest.spec as CatalogSpecComposed).components.find(
+        (c) => c.name === 'umami',
+      )!.env;
+      expect(env.map((e) => e.valueFrom)).toEqual([
+        { generate: 'rsa-private-key', bits: 4096 },
+        { certificateFor: 'KEY', commonName: 'ca', validDays: 365 },
+      ]);
+    });
+
+    it('refuses a certificate for a key the component does not generate', () => {
+      expect(() =>
+        service.validate(
+          withEnv([{ name: 'CERT', valueFrom: { certificateFor: 'MISSING' } }]),
+        ),
+      ).toThrow('Invalid catalog manifest');
+    });
+
+    it('refuses a key size it does not support', () => {
+      expect(() =>
+        service.validate(
+          withEnv([
+            {
+              name: 'KEY',
+              valueFrom: { generate: 'rsa-private-key', bits: 1024 },
+            },
+          ]),
+        ),
+      ).toThrow('Invalid catalog manifest');
+    });
+
+    it('keeps a bcrypt hash of a generated secret', () => {
+      const manifest = service.validate(
+        withEnv([
+          { name: 'PASSWORD', valueFrom: { generate: 'secret', length: 32 } },
+          { name: 'HASH', valueFrom: { bcryptOf: 'PASSWORD' } },
+        ]),
+      );
+      const env = (manifest.spec as CatalogSpecComposed).components.find(
+        (c) => c.name === 'umami',
+      )!.env;
+      expect(env[1].valueFrom).toEqual({ bcryptOf: 'PASSWORD' });
+    });
+
+    it('refuses a bcrypt hash of a plain value', () => {
+      expect(() =>
+        service.validate(
+          withEnv([
+            { name: 'USER', value: 'admin' },
+            { name: 'HASH', valueFrom: { bcryptOf: 'USER' } },
+          ]),
+        ),
+      ).toThrow('Invalid catalog manifest');
+    });
+
+    it('still refuses a generator it does not know', () => {
+      expect(() =>
+        service.validate(
+          withEnv([
+            { name: 'KEY', valueFrom: { generate: 'ed25519', length: 32 } },
+          ]),
+        ),
+      ).toThrow('Invalid catalog manifest');
+    });
+  });
+
+  describe('config files of a composed component', () => {
+    const withConfig = (content: string) => {
+      const manifest = seed('umami.flui.yaml') as {
+        spec: { components: Array<{ name: string; configFiles?: unknown[] }> };
+      };
+      manifest.spec.components.find((c) => c.name === 'umami')!.configFiles = [
+        { path: '/etc/app.conf', content },
+      ];
+      return manifest;
+    };
+
+    it('may name the address of a sibling', () => {
+      expect(() =>
+        service.validate(
+          withConfig('upstream {{ components.db.host }}:5432 {{self.fqdn}}'),
+        ),
+      ).not.toThrow();
+    });
+
+    it('may not read a variable, which would store it unencrypted', () => {
+      expect(() =>
+        service.validate(
+          withConfig('password = {{components.db.env.POSTGRES_PASSWORD}}'),
+        ),
+      ).toThrow('Invalid catalog manifest');
+    });
   });
 });

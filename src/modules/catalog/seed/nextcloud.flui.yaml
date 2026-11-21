@@ -20,9 +20,9 @@ metadata:
     - php
     - self-hosted
   license: AGPL-3.0
-  version: '32'
-  maintainedAt: '2026-05-30'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/nextcloud.svg
+  version: '35'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/nextcloud.svg
   links:
     website: https://nextcloud.com
     docs: https://docs.nextcloud.com
@@ -51,7 +51,7 @@ spec:
       image:
         registry: docker.io
         repository: library/mariadb
-        tag: 'lts'
+        tag: '12.3-noble'
       ports:
         - name: mysql
           internal: 3306
@@ -122,7 +122,7 @@ spec:
       image:
         registry: docker.io
         repository: library/redis
-        tag: 'alpine'
+        tag: '8-alpine'
       ports:
         - name: redis
           internal: 6379
@@ -170,7 +170,7 @@ spec:
       image:
         registry: docker.io
         repository: library/nextcloud
-        tag: 'apache'
+        tag: '35-apache'
       ports:
         - name: http
           internal: 80
@@ -285,7 +285,7 @@ spec:
       image:
         registry: docker.io
         repository: collabora/code
-        tag: 'latest'
+        tag: '26.04.6.1.1'
       ports:
         - name: http
           internal: 9980

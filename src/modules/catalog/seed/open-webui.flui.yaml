@@ -1,0 +1,294 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: open-webui
+  name: Open WebUI
+  description: >
+    A private chat for your company on top of the language models you choose.
+    Conversations, shared prompts, document chat and per-user permissions,
+    with every model reached through its own LiteLLM gateway so provider keys,
+    budgets and usage stay in one place. Ships as Open WebUI, LiteLLM and
+    LiteLLM's PostgreSQL, installed and torn down together. Add models and
+    provider keys from the LiteLLM admin UI at /ui on the gateway's address,
+    signing in as admin with the password chosen at install; they then appear
+    in the chat. Sign-up is closed: the admin invites everyone else.
+  appKind: APPLICATION
+  category: ai
+  tags:
+    - ai
+    - llm
+    - chat
+    - assistant
+    - rag
+    - composed
+  license: Open WebUI License
+  version: '0.13'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/open-webui.svg
+  links:
+    website: https://openwebui.com
+    docs: https://docs.openwebui.com
+    source: https://github.com/open-webui/open-webui
+  ratings:
+    wow: 5
+    utility: 5
+    euFit: 4
+    community: 5
+  alternativeTo:
+    - ChatGPT Enterprise
+    - Microsoft Copilot
+    - Claude for Work
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: open-webui.internal
+
+  components:
+    - name: db
+      engine: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '17-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: litellm
+        - name: POSTGRES_USER
+          value: litellm
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - litellm
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    # Listed before the gateway so the chat is the install's main address.
+    - name: webui
+      dependsOn:
+        - litellm
+      image:
+        registry: ghcr.io
+        repository: open-webui/open-webui
+        tag: v0.13.4
+      ports:
+        - name: http
+          internal: 8080
+          expose: true
+          protocol: http
+      volumes:
+        - name: data
+          mountPath: /app/backend/data
+          required: true
+          size: 10Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: WEBUI_URL
+          value: 'https://{{self.fqdn}}'
+        - name: WEBUI_SECRET_KEY
+          valueFrom:
+            generate: secret
+            length: 48
+            format: hex
+          description: Signs session tokens. Generated once at install; changing it signs everyone out.
+        - name: WEBUI_ADMIN_EMAIL
+          valueFrom:
+            userInput:
+              label: Admin email
+              format: email
+          description: Email the administrator signs in with. Created on the first start, after which sign-up is closed.
+        - name: WEBUI_ADMIN_PASSWORD
+          value: '{{components.litellm.env.UI_PASSWORD}}'
+          secret: true
+          description: Same password as the LiteLLM admin UI, chosen at install.
+        - name: WEBUI_ADMIN_NAME
+          value: Admin
+        - name: ENABLE_SIGNUP
+          value: 'False'
+        - name: ENABLE_OLLAMA_API
+          value: 'False'
+        - name: OPENAI_API_BASE_URL
+          value: 'http://{{components.litellm.host}}:4000/v1'
+        - name: OPENAI_API_KEY
+          value: '{{components.litellm.env.LITELLM_MASTER_KEY}}'
+          secret: true
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: '2'
+          memory: 4Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 250m
+              max: '4'
+            memory:
+              min: 1Gi
+              max: 6Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /health
+        port: 8080
+        initialDelay: 60s
+        interval: 15s
+        timeout: 5s
+        retries: 20
+
+    - name: litellm
+      dependsOn:
+        - db
+      image:
+        registry: ghcr.io
+        repository: berriai/litellm
+        tag: v1.110.2
+      ports:
+        - name: http
+          internal: 4000
+          expose: true
+          protocol: http
+      env:
+        - name: DATABASE_URL
+          value: 'postgresql://{{components.db.env.POSTGRES_USER}}:{{components.db.env.POSTGRES_PASSWORD}}@{{components.db.host}}:5432/{{components.db.env.POSTGRES_DB}}'
+          secret: true
+        - name: LITELLM_MASTER_KEY_SEED
+          valueFrom:
+            generate: secret
+            length: 48
+            format: hex
+          description: Random part of the master key. Generated once at install.
+        - name: LITELLM_MASTER_KEY
+          value: 'sk-{{self.env.LITELLM_MASTER_KEY_SEED}}'
+          secret: true
+          description: Admin key of the gateway, also used by the chat. Give other applications virtual keys, never this one.
+        - name: LITELLM_SALT_KEY
+          valueFrom:
+            generate: secret
+            length: 48
+            format: hex
+          description: Encrypts the provider keys stored in the database. Generated once at install; changing it makes the stored keys unreadable.
+        - name: UI_USERNAME
+          value: admin
+        - name: UI_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 12
+              maxLength: 128
+              pattern: '^.{12,128}$'
+              patternDescription: At least 12 characters
+          description: Password of the chat administrator and of the LiteLLM admin UI (user admin). Flui does not store or log it outside this install.
+        - name: STORE_MODEL_IN_DB
+          value: 'True'
+        - name: LITELLM_MODE
+          value: PRODUCTION
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 200m
+              max: '4'
+            memory:
+              min: 512Mi
+              max: 4Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /health/liveliness
+        port: 4000
+        initialDelay: 40s
+        interval: 15s
+        timeout: 5s
+        retries: 16
+
+  auth:
+    mode: native
+
+  smokeTest:
+    type: http
+    path: /health
+    expectedStatus: 200
+    timeoutSeconds: 180

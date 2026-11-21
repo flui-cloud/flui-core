@@ -18,7 +18,7 @@ metadata:
   license: MIT
   version: '2'
   maintainedAt: '2026-04-23'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/uptime-kuma.svg
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/uptime-kuma.svg
   links:
     website: https://uptime.kuma.pet
     docs: https://github.com/louislam/uptime-kuma/wiki

@@ -139,7 +139,7 @@ describe('image pre-pull', () => {
 describe('the guided path', () => {
   it('keeps the heavy catalog applications out of it', () => {
     expect(isFastCatalogApp('gitea')).toBe(true);
-    expect(isFastCatalogApp('immich')).toBe(false);
+    expect(isFastCatalogApp('memos')).toBe(false);
     expect(isFastCatalogApp('nextcloud')).toBe(false);
   });
 });

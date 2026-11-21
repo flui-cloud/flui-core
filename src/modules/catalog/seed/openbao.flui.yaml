@@ -25,9 +25,9 @@ metadata:
     - security
     - building-block
   license: MPL-2.0
-  version: '2.5'
-  maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/openbao.svg
+  version: '2.7'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/openbao.svg
   links:
     website: https://openbao.org
     docs: https://openbao.org/docs/
@@ -45,11 +45,11 @@ spec:
   image:
     registry: docker.io
     repository: openbao/openbao
-    tag: '2.5'
+    tag: '2.7'
 
-  # Run a production server with file storage (single-node). Re-invoke the
-  # image's entrypoint so it sets up the runtime, then start the configured
-  # server. Flui's secrets console initialises + unseals it on first use.
+  # Run a production server on single-node Raft storage (OpenBao 2.7 removed
+  # file storage). Re-invoke the image's entrypoint so it sets up the runtime,
+  # then start the configured server. Flui's secrets console initialises + unseals it on first use.
   # There is no seal stanza (KMS/transit auto-unseal): after any pod restart the
   # server comes up sealed, and the openbao-unseal reconcile scheduler re-unseals
   # it from the stored BAO_UNSEAL_KEY within ~1 min so consumer apps self-heal.
@@ -88,16 +88,19 @@ spec:
   configFiles:
     - path: /openbao/config/bao.hcl
       content: |
-        storage "file" {
-          path = "/openbao/data"
+        storage "raft" {
+          path    = "/openbao/data"
+          node_id = "openbao-0"
         }
         listener "tcp" {
-          address = "0.0.0.0:8200"
-          tls_disable = 1
+          address         = "0.0.0.0:8200"
+          cluster_address = "0.0.0.0:8201"
+          tls_disable     = 1
         }
         disable_mlock = true
-        api_addr = "http://127.0.0.1:8200"
-        ui = false
+        api_addr      = "http://127.0.0.1:8200"
+        cluster_addr  = "http://127.0.0.1:8201"
+        ui            = false
 
   resources:
     requests:

@@ -19,9 +19,9 @@ metadata:
     - broker
     - building-block
   license: MPL-2.0
-  version: '4.3'
-  maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/rabbitmq.svg
+  version: '4.4'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/rabbitmq.svg
   links:
     website: https://www.rabbitmq.com
     docs: https://www.rabbitmq.com/docs
@@ -43,7 +43,7 @@ spec:
   image:
     registry: docker.io
     repository: library/rabbitmq
-    tag: '4.3-management'
+    tag: '4.4-management'
 
   ports:
     - name: amqp

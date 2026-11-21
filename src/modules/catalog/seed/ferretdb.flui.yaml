@@ -23,7 +23,7 @@ metadata:
   # so patches/minors flow on redeploy but never jump to a breaking 3.x.
   version: '2'
   maintainedAt: '2026-06-16'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ferretdb.svg
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/ferretdb.svg
   links:
     website: https://www.ferretdb.com
     docs: https://docs.ferretdb.io

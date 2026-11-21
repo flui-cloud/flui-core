@@ -1,0 +1,252 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: zitadel
+  name: Zitadel
+  description: >
+    Login and identity for the users of your own applications — sign-up,
+    sign-in, multi-factor authentication, passkeys, organizations and roles,
+    served over OpenID Connect, OAuth 2 and SAML. A self-hosted alternative to
+    AWS Cognito and Microsoft Entra ID. Ships as the identity server plus its
+    own PostgreSQL, installed and torn down together. The address chosen at
+    install is the issuer every application trusts, so pick it before
+    connecting the first application.
+  appKind: APPLICATION
+  category: security
+  tags:
+    - identity
+    - authentication
+    - oidc
+    - oauth2
+    - saml
+    - sso
+    - mfa
+    - composed
+  license: AGPL-3.0
+  version: '4.20'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/zitadel.svg
+  links:
+    website: https://zitadel.com
+    docs: https://zitadel.com/docs
+    source: https://github.com/zitadel/zitadel
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 5
+    community: 4
+  alternativeTo:
+    - AWS Cognito
+    - Microsoft Entra ID
+    - Auth0
+    - Okta
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: zitadel.internal
+
+  components:
+    - name: db
+      engine: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '17-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: postgres
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - postgres
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: zitadel
+      dependsOn:
+        - db
+      image:
+        registry: ghcr.io
+        repository: zitadel/zitadel
+        tag: v4.20.5
+      # The image is built FROM scratch: no shell, so the entrypoint is argv.
+      # start-from-init creates the database, the first instance and its admin
+      # on the first boot and skips what already exists on every later one.
+      command:
+        - /app/zitadel
+        - start-from-init
+        - --masterkeyFromEnv
+        - --tlsMode
+        - external
+      ports:
+        - name: http
+          internal: 8080
+          expose: true
+          protocol: http
+      env:
+        - name: ZITADEL_MASTERKEY
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Encrypts the keys and secrets Zitadel stores. Generated once at install; losing or changing it makes the stored data unreadable.
+        - name: ZITADEL_EXTERNALDOMAIN
+          value: '{{self.fqdn}}'
+        - name: ZITADEL_EXTERNALPORT
+          value: '443'
+        - name: ZITADEL_EXTERNALSECURE
+          value: 'true'
+        - name: ZITADEL_DATABASE_POSTGRES_HOST
+          value: '{{components.db.host}}'
+        - name: ZITADEL_DATABASE_POSTGRES_PORT
+          value: '5432'
+        - name: ZITADEL_DATABASE_POSTGRES_DATABASE
+          value: zitadel
+        - name: ZITADEL_DATABASE_POSTGRES_USER_USERNAME
+          value: zitadel
+        - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE
+          value: disable
+        - name: ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME
+          value: postgres
+        - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+          value: '{{components.db.env.POSTGRES_PASSWORD}}'
+          secret: true
+        - name: ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE
+          value: disable
+        - name: ZITADEL_FIRSTINSTANCE_ORG_NAME
+          valueFrom:
+            userInput:
+              label: Organization name
+              default: My Organization
+              format: text
+              minLength: 2
+              maxLength: 64
+          description: Name of the first organization, which owns the admin account.
+        - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME
+          valueFrom:
+            userInput:
+              label: Admin email
+              format: email
+          description: Sign-in name and email of the first administrator.
+        - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 10
+              maxLength: 72
+              pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{10,72}$'
+              patternDescription: At least 10 characters, with a lowercase letter, an uppercase letter, a digit and a symbol
+          description: Password of the first administrator. Flui does not store or log it outside this install.
+        - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED
+          value: 'false'
+        # The sign-in pages built into the server, so a single container serves
+        # the whole login flow.
+        - name: ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED
+          value: 'false'
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /debug/healthz
+        port: 8080
+        initialDelay: 30s
+        interval: 15s
+        timeout: 5s
+        retries: 20
+
+  auth:
+    mode: native
+
+  smokeTest:
+    type: http
+    path: /.well-known/openid-configuration
+    expectedStatus: 200
+    timeoutSeconds: 120

@@ -83,7 +83,7 @@ describe('catalog reuse and install reads respect ownership', () => {
     );
     access.assertCanCreate.mockClear();
     await expect(
-      controller.install('linkding', { clusterId: 'c1' } as never, req),
+      controller.install('gitea', { clusterId: 'c1' } as never, req),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(access.assertCanCreate).not.toHaveBeenCalled();
   });

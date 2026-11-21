@@ -1,0 +1,121 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: clickhouse
+  name: ClickHouse
+  description: >
+    Column-oriented analytics database that answers aggregate queries over
+    billions of rows in seconds — events, logs, metrics, product analytics and
+    reporting. Speaks SQL over HTTP (port 8123) and its native protocol (port
+    9000), so the usual clients, drivers and BI tools such as Metabase connect
+    directly. Building block: attach it to an application or point a BI tool at
+    it. Tracks the long-term support release line.
+  appKind: DATABASE
+  category: database
+  tags:
+    - database
+    - analytics
+    - olap
+    - columnar
+    - sql
+    - building-block
+  license: Apache-2.0
+  version: '26.8'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/clickhouse.svg
+  links:
+    website: https://clickhouse.com
+    docs: https://clickhouse.com/docs
+    source: https://github.com/ClickHouse/ClickHouse
+  alternativeTo:
+    - Amazon Redshift
+    - Azure Synapse Analytics
+    - Google BigQuery
+    - Snowflake
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: clickhouse/clickhouse-server
+    tag: 26.8.41.14
+
+  ports:
+    - name: http
+      internal: 8123
+      expose: false
+      protocol: http
+    - name: native
+      internal: 9000
+      expose: false
+      protocol: tcp
+
+  volumes:
+    - name: data
+      mountPath: /var/lib/clickhouse
+      required: true
+      size: 20Gi
+
+  persistence:
+    scope: dedicated
+
+  env:
+    - name: CLICKHOUSE_USER
+      value: clickhouse
+    - name: CLICKHOUSE_PASSWORD
+      valueFrom:
+        generate: secret
+        length: 32
+    - name: CLICKHOUSE_DB
+      value: analytics
+    - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
+      value: '1'
+      description: Lets the clickhouse user create further users and grants with SQL.
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: '2'
+      memory: 4Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 250m
+          max: '8'
+        memory:
+          min: 1Gi
+          max: 16Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+          - CPUThrottling
+        cooldown: 10m
+
+  healthcheck:
+    type: http
+    path: /ping
+    port: 8123
+    initialDelay: 15s
+    interval: 10s
+    timeout: 5s
+    retries: 6
+
+  auth:
+    mode: none
+
+  smokeTest:
+    type: script
+    timeoutSeconds: 20
+    inline: |
+      curl -sf --user "${CLICKHOUSE_USER}:${CLICKHOUSE_PASSWORD}" \
+        "http://${SMOKE_APP_FQDN}:8123/?query=SELECT%201"

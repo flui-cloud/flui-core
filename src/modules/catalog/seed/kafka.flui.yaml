@@ -19,9 +19,9 @@ metadata:
     - kraft
     - building-block
   license: Apache-2.0
-  version: '4.3'
-  maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/apache-kafka.svg
+  version: '4.4'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/apache-kafka.svg
   links:
     website: https://kafka.apache.org
     docs: https://kafka.apache.org/documentation
@@ -41,7 +41,7 @@ spec:
   image:
     registry: docker.io
     repository: apache/kafka
-    tag: '4.3.0'
+    tag: '4.4.0'
 
   ports:
     - name: kafka

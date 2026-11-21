@@ -6,7 +6,7 @@ const OWNER_A = '11111111-1111-1111-1111-111111111111';
 function queryBuilder() {
   const wheres: Array<[string, unknown]> = [];
   const qb: Record<string, jest.Mock> = {};
-  for (const method of ['update', 'set', 'delete', 'orderBy']) {
+  for (const method of ['update', 'set', 'delete', 'orderBy', 'select']) {
     qb[method] = jest.fn(() => qb);
   }
   qb.where = jest.fn((clause: string, params?: unknown) => {
@@ -16,6 +16,7 @@ function queryBuilder() {
   qb.andWhere = qb.where;
   qb.execute = jest.fn(async () => ({ affected: 0 }));
   qb.getMany = jest.fn(async () => []);
+  qb.getRawMany = jest.fn(async () => []);
   return { qb, wheres };
 }
 
@@ -159,5 +160,45 @@ describe('CatalogAppDefinitionRepository ownership', () => {
     expect(typeorm.findOne.mock.calls[0][0].where.ownerUserId).toEqual(
       IsNull(),
     );
+  });
+
+  it('retires shared apps no seed file carries, deleting only rows no install references', async () => {
+    const { repo, typeorm, builders } = build();
+    typeorm.createQueryBuilder.mockImplementationOnce(() => {
+      const b = queryBuilder();
+      b.qb.getRawMany.mockResolvedValueOnce([{ slug: 'jellyfin' }]);
+      builders.push(b);
+      return b.qb;
+    });
+
+    await expect(
+      repo.retireSharedSlugsNotIn(['gitea', 'umami']),
+    ).resolves.toEqual({ retiredSlugs: ['jellyfin'], deleted: 0 });
+
+    expect(builders).toHaveLength(3);
+    const [, deactivate, remove] = builders;
+    expect(deactivate.qb.set).toHaveBeenCalledWith({
+      isActive: false,
+      isPublished: false,
+    });
+    for (const { wheres } of builders) {
+      expect(wheres.some(([c]) => /ownerUserId"? IS NULL/.test(c))).toBe(true);
+      expect(wheres).toContainEqual(
+        expect.arrayContaining([{ keepSlugs: ['gitea', 'umami'] }]),
+      );
+    }
+    expect(remove.wheres.map(([c]) => c)).toContain(
+      'id NOT IN (SELECT "catalogAppDefinitionId" FROM catalog_installs)',
+    );
+  });
+
+  it('retires nothing when it is given no seed slugs', async () => {
+    const { repo, typeorm } = build();
+
+    await expect(repo.retireSharedSlugsNotIn([])).resolves.toEqual({
+      retiredSlugs: [],
+      deleted: 0,
+    });
+    expect(typeorm.createQueryBuilder).not.toHaveBeenCalled();
   });
 });

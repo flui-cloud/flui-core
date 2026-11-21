@@ -17,12 +17,12 @@ metadata:
     - realtime
     - sqlite
   license: MIT
-  version: '0.35'
-  maintainedAt: '2026-04-19'
+  version: '0.40'
+  maintainedAt: '2026-11-20'
   # PocketBase is backend-only; root "/" returns 404. Users reach the admin UI
   # via "/_/". Dashboard "Open app" link must point there, not to the bare root.
   entrypointPath: '/_/'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/pocketbase.svg
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/pocketbase.svg
   links:
     website: https://pocketbase.io
     docs: https://pocketbase.io/docs
@@ -44,7 +44,7 @@ spec:
   image:
     registry: ghcr.io
     repository: muchobien/pocketbase
-    tag: '0.35'
+    tag: '0.40'
 
   ports:
     - name: http

@@ -19,9 +19,9 @@ metadata:
     - jetstream
     - building-block
   license: Apache-2.0
-  version: '2.10'
-  maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/nats.svg
+  version: '2.15'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/nats-io/nats-site@master/static/img/nats-icon-color.svg
   links:
     website: https://nats.io
     docs: https://docs.nats.io
@@ -40,7 +40,7 @@ spec:
   image:
     registry: docker.io
     repository: library/nats
-    tag: '2.10-alpine'
+    tag: '2.15-alpine'
 
   # JetStream on, persisted to the data volume; monitoring on 8222 for healthchecks.
   startCommand: 'nats-server --jetstream --store_dir=/data --http_port=8222'

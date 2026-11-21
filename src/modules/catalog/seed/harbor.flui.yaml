@@ -1,0 +1,965 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: harbor
+  name: Harbor
+  description: >
+    A private container registry for your team. Push and pull images with the
+    usual Docker and OCI clients, group them in projects with their own members
+    and quotas, scan every image for known vulnerabilities, and replicate to or
+    from other registries. Ships as the Harbor services, its own PostgreSQL,
+    Valkey, Trivy scanner and an object store for the image layers, installed
+    and torn down together. Sign in as admin with the password chosen at
+    install, then `docker login` with the same address.
+  appKind: TOOL
+  category: developer-tools
+  tags:
+    - container-registry
+    - docker
+    - oci
+    - vulnerability-scanning
+    - composed
+  license: Apache-2.0
+  version: '2.15'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/harbor.svg
+  links:
+    website: https://goharbor.io
+    docs: https://goharbor.io/docs/
+    source: https://github.com/goharbor/harbor
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 5
+    community: 5
+  alternativeTo:
+    - Amazon ECR
+    - Azure Container Registry
+    - Docker Hub
+    - GitHub Container Registry
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: harbor.internal
+
+  components:
+    # Listed first so the web portal, which also routes the registry API to the
+    # core, is the install's address.
+    - name: portal
+      dependsOn:
+        - core
+      image:
+        registry: docker.io
+        repository: goharbor/harbor-portal
+        tag: v2.15.5
+      ports:
+        - name: http
+          internal: 8080
+          expose: true
+          protocol: http
+      env: []
+      configFiles:
+        - path: /etc/nginx/nginx.conf
+          content: |
+            worker_processes auto;
+            pid /tmp/nginx.pid;
+            events {
+              worker_connections 1024;
+            }
+            http {
+              client_body_temp_path /tmp/client_body_temp;
+              proxy_temp_path /tmp/proxy_temp;
+              fastcgi_temp_path /tmp/fastcgi_temp;
+              uwsgi_temp_path /tmp/uwsgi_temp;
+              scgi_temp_path /tmp/scgi_temp;
+              include /etc/nginx/mime.types;
+              tcp_nodelay on;
+              proxy_http_version 1.1;
+              upstream core {
+                server {{components.core.host}}:8080;
+              }
+              map $http_x_forwarded_proto $x_forwarded_proto {
+                default $http_x_forwarded_proto;
+                ""      $scheme;
+              }
+              server {
+                listen 8080;
+                server_tokens off;
+                client_max_body_size 0;
+                root /usr/share/nginx/html;
+                index index.html;
+                add_header X-Frame-Options DENY;
+                add_header Content-Security-Policy "frame-ancestors 'none'";
+                location / {
+                  try_files $uri $uri/ /index.html;
+                }
+                location = /index.html {
+                  add_header Cache-Control "no-store, no-cache, must-revalidate";
+                }
+                location /devcenter-api-2.0 {
+                  try_files $uri $uri/ /swagger-ui-index.html;
+                }
+                location ~ ^/(api|c|service|v2)/ {
+                  proxy_pass http://core;
+                  proxy_set_header Host $http_host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
+                  proxy_buffering off;
+                  proxy_request_buffering off;
+                  proxy_send_timeout 900;
+                  proxy_read_timeout 900;
+                }
+                location /v1/ {
+                  return 404;
+                }
+                location /service/notifications {
+                  return 404;
+                }
+              }
+            }
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 50m
+              max: '1'
+            memory:
+              min: 64Mi
+              max: 512Mi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /
+        port: 8080
+        initialDelay: 10s
+        interval: 15s
+        timeout: 5s
+        retries: 6
+
+    - name: db
+      engine: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '17-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: registry
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - postgres
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: valkey
+      engine: valkey
+      image:
+        registry: docker.io
+        repository: valkey/valkey
+        tag: '9-alpine'
+      ports:
+        - name: valkey
+          internal: 6379
+          expose: false
+          protocol: tcp
+      env: []
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 50m
+              max: '1'
+            memory:
+              min: 64Mi
+              max: 1Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 10m
+      healthcheck:
+        type: tcp
+        port: 6379
+        initialDelay: 10s
+        interval: 10s
+        timeout: 5s
+        retries: 6
+
+    # Image layers live in an S3 bucket rather than on a volume, so the
+    # registry and the controller that collects its garbage, two separate
+    # services, read the same storage.
+    - name: storage
+      engine: garage
+      image:
+        registry: docker.io
+        repository: dxflrs/garage
+        tag: v2.5.0
+      command:
+        - /garage
+        - server
+        - --single-node
+        - --default-bucket
+      ports:
+        - name: s3
+          internal: 3900
+          expose: false
+          protocol: http
+        - name: admin
+          internal: 3903
+          expose: false
+          protocol: http
+      volumes:
+        - name: data
+          mountPath: /var/lib/garage
+          required: true
+          size: 20Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: GARAGE_RPC_SECRET
+          valueFrom:
+            generate: secret
+            length: 64
+            format: hex
+        - name: GARAGE_ADMIN_TOKEN
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: GARAGE_DEFAULT_ACCESS_KEY
+          valueFrom:
+            generate: secret
+            length: 16
+            format: hex
+        - name: GARAGE_DEFAULT_SECRET_KEY
+          valueFrom:
+            generate: secret
+            length: 64
+            format: hex
+        - name: GARAGE_DEFAULT_BUCKET
+          value: registry
+      configFiles:
+        - path: /etc/garage.toml
+          content: |
+            metadata_dir = "/var/lib/garage/meta"
+            data_dir = "/var/lib/garage/data"
+            db_engine = "lmdb"
+
+            replication_factor = 1
+
+            rpc_bind_addr = "[::]:3901"
+            rpc_public_addr = "127.0.0.1:3901"
+
+            [s3_api]
+            s3_region = "garage"
+            api_bind_addr = "[::]:3900"
+            root_domain = ".s3.garage.internal"
+
+            [admin]
+            api_bind_addr = "[::]:3903"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: '2'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '4'
+            memory:
+              min: 128Mi
+              max: 4Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: http
+        path: /health
+        port: 3903
+        initialDelay: 10s
+        interval: 15s
+        timeout: 5s
+        retries: 5
+
+    - name: registry
+      dependsOn:
+        - storage
+        - valkey
+      image:
+        registry: docker.io
+        repository: goharbor/registry-photon
+        tag: v2.15.5
+      # The registry only accepts a bcrypt htpasswd file; it is written from
+      # the hashed secret at start so the hash never sits in a config file.
+      startCommand: >-
+        umask 077 && printf '%s:%s\n' "$REGISTRY_CREDENTIAL_USERNAME"
+        "$REGISTRY_CREDENTIAL_HASH" > /tmp/passwd && exec /home/harbor/entrypoint.sh
+      ports:
+        - name: http
+          internal: 5000
+          expose: false
+          protocol: http
+      securityContext:
+        runAsUser: 10000
+        runAsGroup: 10000
+      env:
+        - name: REGISTRY_CREDENTIAL_USERNAME
+          value: harbor_registry_user
+        - name: REGISTRY_CREDENTIAL_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Password the Harbor services use to reach the registry. Generated once at install.
+        - name: REGISTRY_CREDENTIAL_HASH
+          valueFrom:
+            bcryptOf: REGISTRY_CREDENTIAL_PASSWORD
+        - name: REGISTRY_HTTP_SECRET
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: REGISTRY_STORAGE_S3_ACCESSKEY
+          value: '{{components.storage.env.GARAGE_DEFAULT_ACCESS_KEY}}'
+          secret: true
+        - name: REGISTRY_STORAGE_S3_SECRETKEY
+          value: '{{components.storage.env.GARAGE_DEFAULT_SECRET_KEY}}'
+          secret: true
+      configFiles:
+        - path: /etc/registry/config.yml
+          content: |
+            version: 0.1
+            log:
+              level: info
+              fields:
+                service: registry
+            storage:
+              s3:
+                region: garage
+                bucket: registry
+                regionendpoint: http://{{components.storage.host}}:3900
+                secure: false
+                v4auth: true
+                rootdirectory: /
+              cache:
+                layerinfo: redis
+              maintenance:
+                uploadpurging:
+                  enabled: false
+              delete:
+                enabled: true
+              redirect:
+                disable: true
+            redis:
+              addr: {{components.valkey.host}}:6379
+              db: 2
+              readtimeout: 10s
+              writetimeout: 10s
+              dialtimeout: 10s
+              pool:
+                maxidle: 100
+                maxactive: 500
+                idletimeout: 60s
+            http:
+              addr: :5000
+              relativeurls: false
+              debug:
+                addr: localhost:5001
+            auth:
+              htpasswd:
+                realm: harbor-registry-basic-realm
+                path: /tmp/passwd
+            validation:
+              disabled: true
+            compatibility:
+              schema1:
+                enabled: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /
+        port: 5000
+        initialDelay: 10s
+        interval: 15s
+        timeout: 5s
+        retries: 6
+
+    - name: trivy
+      dependsOn:
+        - valkey
+      image:
+        registry: docker.io
+        repository: goharbor/trivy-adapter-photon
+        tag: v2.15.5
+      ports:
+        - name: http
+          internal: 8080
+          expose: false
+          protocol: http
+      volumes:
+        - name: cache
+          mountPath: /home/scanner/.cache
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      securityContext:
+        fsGroup: 10000
+        runAsUser: 10000
+        runAsGroup: 10000
+      env:
+        - name: SCANNER_LOG_LEVEL
+          value: info
+        - name: SCANNER_API_SERVER_ADDR
+          value: ':8080'
+        - name: SCANNER_TRIVY_CACHE_DIR
+          value: /home/scanner/.cache/trivy
+        - name: SCANNER_TRIVY_REPORTS_DIR
+          value: /home/scanner/.cache/reports
+        - name: SCANNER_TRIVY_VULN_TYPE
+          value: os,library
+        - name: SCANNER_TRIVY_SEVERITY
+          value: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+        - name: SCANNER_TRIVY_TIMEOUT
+          value: 5m0s
+        - name: SCANNER_REDIS_URL
+          value: 'redis://{{components.valkey.host}}:6379/5?idle_timeout_seconds=30'
+        - name: SCANNER_STORE_REDIS_URL
+          value: 'redis://{{components.valkey.host}}:6379/5?idle_timeout_seconds=30'
+        - name: SCANNER_JOB_QUEUE_REDIS_URL
+          value: 'redis://{{components.valkey.host}}:6379/5?idle_timeout_seconds=30'
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 200m
+              max: '4'
+            memory:
+              min: 512Mi
+              max: 4Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /probe/healthy
+        port: 8080
+        initialDelay: 20s
+        interval: 15s
+        timeout: 5s
+        retries: 10
+
+    - name: core
+      dependsOn:
+        - db
+        - valkey
+        - registry
+        - trivy
+      image:
+        registry: docker.io
+        repository: goharbor/harbor-core
+        tag: v2.15.5
+      # The encryption key and the token signing key are written from the
+      # encrypted env at start; KEY_PATH and TOKEN_PRIVATE_KEY_PATH point there.
+      startCommand: >-
+        umask 077 && printf '%s' "$HARBOR_SECRET_KEY" > /tmp/key && printf
+        '%s\n' "$TOKEN_PRIVATE_KEY" > /tmp/private_key.pem && exec
+        /harbor/entrypoint.sh
+      ports:
+        - name: http
+          internal: 8080
+          expose: false
+          protocol: http
+      securityContext:
+        runAsUser: 10000
+        runAsGroup: 10000
+      env:
+        - name: HARBOR_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 8
+              maxLength: 128
+              pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,128}$'
+              patternDescription: At least 8 characters, with a lowercase letter, an uppercase letter and a digit
+          description: Password of the admin account, set on the first start only. Change it later from the Harbor portal.
+        - name: HARBOR_SECRET_KEY
+          valueFrom:
+            generate: secret
+            length: 16
+          description: Encrypts the credentials Harbor stores. Generated once at install; changing it makes them unreadable.
+        - name: KEY_PATH
+          value: /tmp/key
+        - name: TOKEN_PRIVATE_KEY
+          valueFrom:
+            generate: rsa-private-key
+            bits: 4096
+            format: pkcs1
+          description: Signs the tokens of the registry API. Generated once at install.
+        - name: TOKEN_PRIVATE_KEY_PATH
+          value: /tmp/private_key.pem
+        - name: CORE_SECRET
+          valueFrom:
+            generate: secret
+            length: 16
+        - name: JOBSERVICE_SECRET
+          valueFrom:
+            generate: secret
+            length: 16
+        - name: CSRF_KEY
+          valueFrom:
+            generate: secret
+            length: 32
+        - name: CONFIG_PATH
+          value: /etc/core/app.conf
+        - name: PORT
+          value: '8080'
+        - name: EXT_ENDPOINT
+          value: 'https://{{components.portal.fqdn}}'
+        - name: CORE_URL
+          value: 'http://{{self.host}}:8080'
+        - name: CORE_LOCAL_URL
+          value: http://127.0.0.1:8080
+        - name: TOKEN_SERVICE_URL
+          value: 'http://{{self.host}}:8080/service/token'
+        - name: PORTAL_URL
+          value: 'http://{{components.portal.host}}:8080'
+        - name: JOBSERVICE_URL
+          value: 'http://{{components.jobservice.host}}:8080'
+        - name: REGISTRY_URL
+          value: 'http://{{components.registry.host}}:5000'
+        - name: REGISTRY_CONTROLLER_URL
+          value: 'http://{{components.registryctl.host}}:8080'
+        - name: REGISTRY_STORAGE_PROVIDER_NAME
+          value: s3
+        - name: REGISTRY_CREDENTIAL_USERNAME
+          value: '{{components.registry.env.REGISTRY_CREDENTIAL_USERNAME}}'
+        - name: REGISTRY_CREDENTIAL_PASSWORD
+          value: '{{components.registry.env.REGISTRY_CREDENTIAL_PASSWORD}}'
+          secret: true
+        - name: WITH_TRIVY
+          value: 'true'
+        - name: TRIVY_ADAPTER_URL
+          value: 'http://{{components.trivy.host}}:8080'
+        - name: DATABASE_TYPE
+          value: postgresql
+        - name: POSTGRESQL_HOST
+          value: '{{components.db.host}}'
+        - name: POSTGRESQL_PORT
+          value: '5432'
+        - name: POSTGRESQL_USERNAME
+          value: '{{components.db.env.POSTGRES_USER}}'
+        - name: POSTGRESQL_PASSWORD
+          value: '{{components.db.env.POSTGRES_PASSWORD}}'
+          secret: true
+        - name: POSTGRESQL_DATABASE
+          value: '{{components.db.env.POSTGRES_DB}}'
+        - name: POSTGRESQL_SSLMODE
+          value: disable
+        - name: POSTGRESQL_MAX_IDLE_CONNS
+          value: '100'
+        - name: POSTGRESQL_MAX_OPEN_CONNS
+          value: '900'
+        - name: CHART_CACHE_DRIVER
+          value: redis
+        - name: _REDIS_URL_CORE
+          value: 'redis://{{components.valkey.host}}:6379/0?idle_timeout_seconds=30'
+        - name: _REDIS_URL_REG
+          value: 'redis://{{components.valkey.host}}:6379/2?idle_timeout_seconds=30'
+        - name: LOG_LEVEL
+          value: info
+      configFiles:
+        - path: /etc/core/app.conf
+          content: |
+            appname = Harbor
+            runmode = prod
+            enablegzip = true
+
+            [prod]
+            httpport = 8080
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '4'
+            memory:
+              min: 256Mi
+              max: 4Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /api/v2.0/ping
+        port: 8080
+        initialDelay: 30s
+        interval: 15s
+        timeout: 5s
+        retries: 20
+
+    - name: jobservice
+      dependsOn:
+        - core
+      image:
+        registry: docker.io
+        repository: goharbor/harbor-jobservice
+        tag: v2.15.5
+      ports:
+        - name: http
+          internal: 8080
+          expose: false
+          protocol: http
+      securityContext:
+        runAsUser: 10000
+        runAsGroup: 10000
+      env:
+        - name: CORE_SECRET
+          value: '{{components.core.env.CORE_SECRET}}'
+          secret: true
+        - name: JOBSERVICE_SECRET
+          value: '{{components.core.env.JOBSERVICE_SECRET}}'
+          secret: true
+        - name: CORE_URL
+          value: 'http://{{components.core.host}}:8080'
+        - name: TOKEN_SERVICE_URL
+          value: 'http://{{components.core.host}}:8080/service/token'
+        - name: REGISTRY_URL
+          value: 'http://{{components.registry.host}}:5000'
+        - name: REGISTRY_CONTROLLER_URL
+          value: 'http://{{components.registryctl.host}}:8080'
+        - name: REGISTRY_CREDENTIAL_USERNAME
+          value: '{{components.core.env.REGISTRY_CREDENTIAL_USERNAME}}'
+        - name: REGISTRY_CREDENTIAL_PASSWORD
+          value: '{{components.core.env.REGISTRY_CREDENTIAL_PASSWORD}}'
+          secret: true
+        - name: JOB_SERVICE_POOL_REDIS_URL
+          value: 'redis://{{components.valkey.host}}:6379/1'
+        - name: LOG_LEVEL
+          value: info
+      configFiles:
+        - path: /etc/jobservice/config.yml
+          content: |
+            protocol: "http"
+            port: 8080
+            worker_pool:
+              workers: 10
+              backend: "redis"
+              redis_pool:
+                redis_url: "redis://{{components.valkey.host}}:6379/1"
+                namespace: "harbor_job_service_namespace"
+                idle_timeout_second: 3600
+            job_loggers:
+              - name: "DB"
+                level: INFO
+                sweeper:
+                  duration: 14
+              - name: "STD_OUTPUT"
+                level: INFO
+            metric:
+              enabled: false
+              path: /metrics
+              port: 8001
+            loggers:
+              - name: "STD_OUTPUT"
+                level: INFO
+            reaper:
+              max_update_hours: 24
+              max_dangling_hours: 168
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /api/v1/stats
+        port: 8080
+        initialDelay: 20s
+        interval: 15s
+        timeout: 5s
+        retries: 10
+
+    - name: registryctl
+      dependsOn:
+        - core
+        - registry
+      image:
+        registry: docker.io
+        repository: goharbor/harbor-registryctl
+        tag: v2.15.5
+      ports:
+        - name: http
+          internal: 8080
+          expose: false
+          protocol: http
+      securityContext:
+        runAsUser: 10000
+        runAsGroup: 10000
+      env:
+        - name: CORE_SECRET
+          value: '{{components.core.env.CORE_SECRET}}'
+          secret: true
+        - name: JOBSERVICE_SECRET
+          value: '{{components.core.env.JOBSERVICE_SECRET}}'
+          secret: true
+        - name: REGISTRY_HTTP_SECRET
+          value: '{{components.registry.env.REGISTRY_HTTP_SECRET}}'
+          secret: true
+        - name: REGISTRY_STORAGE_S3_ACCESSKEY
+          value: '{{components.registry.env.REGISTRY_STORAGE_S3_ACCESSKEY}}'
+          secret: true
+        - name: REGISTRY_STORAGE_S3_SECRETKEY
+          value: '{{components.registry.env.REGISTRY_STORAGE_S3_SECRETKEY}}'
+          secret: true
+        - name: LOG_LEVEL
+          value: info
+      configFiles:
+        - path: /etc/registryctl/config.yml
+          content: |
+            ---
+            protocol: "http"
+            port: 8080
+            log_level: info
+            registry_config: "/etc/registry/config.yml"
+        - path: /etc/registry/config.yml
+          content: |
+            version: 0.1
+            log:
+              level: info
+              fields:
+                service: registry
+            storage:
+              s3:
+                region: garage
+                bucket: registry
+                regionendpoint: http://{{components.storage.host}}:3900
+                secure: false
+                v4auth: true
+                rootdirectory: /
+              cache:
+                layerinfo: redis
+              maintenance:
+                uploadpurging:
+                  enabled: false
+              delete:
+                enabled: true
+              redirect:
+                disable: true
+            redis:
+              addr: {{components.valkey.host}}:6379
+              db: 2
+              readtimeout: 10s
+              writetimeout: 10s
+              dialtimeout: 10s
+            http:
+              addr: :5000
+            validation:
+              disabled: true
+            compatibility:
+              schema1:
+                enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: '1'
+          memory: 512Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 50m
+              max: '2'
+            memory:
+              min: 64Mi
+              max: 1Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /api/health
+        port: 8080
+        initialDelay: 10s
+        interval: 15s
+        timeout: 5s
+        retries: 6
+
+  auth:
+    mode: native
+
+  smokeTest:
+    type: http
+    path: /api/v2.0/ping
+    expectedStatus: 200
+    timeoutSeconds: 180

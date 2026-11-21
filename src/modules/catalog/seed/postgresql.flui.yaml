@@ -17,7 +17,7 @@ metadata:
   license: PostgreSQL
   version: '17'
   maintainedAt: '2026-07-03'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/postgresql.svg
   links:
     website: https://www.postgresql.org
     docs: https://www.postgresql.org/docs/

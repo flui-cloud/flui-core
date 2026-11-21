@@ -19,9 +19,9 @@ metadata:
     - ai
     - composed
   license: Sustainable Use License
-  version: '2.25'
-  maintainedAt: '2026-06-15'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/n8n.svg
+  version: '2.48'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/n8n.svg
   links:
     website: https://n8n.io
     docs: https://docs.n8n.io
@@ -116,7 +116,7 @@ spec:
       image:
         registry: docker.io
         repository: n8nio/n8n
-        tag: '2.25.7'
+        tag: '2.48.6'
       ports:
         - name: http
           internal: 5678

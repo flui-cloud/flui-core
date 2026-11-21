@@ -18,9 +18,9 @@ metadata:
     - code-hosting
     - package-registry
   license: MIT
-  version: '1.26'
-  maintainedAt: '2026-06-15'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/gitea.svg
+  version: '28.4'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/gitea.svg
   links:
     website: https://about.gitea.com
     docs: https://docs.gitea.com
@@ -42,7 +42,7 @@ spec:
   image:
     registry: docker.gitea.com
     repository: gitea
-    tag: '1.26.2'
+    tag: '28.4.0'
 
   ports:
     - name: http
@@ -71,7 +71,40 @@ spec:
       description: Use the embedded SQLite database so Gitea runs as a single binary with no external DB.
     - name: GITEA__security__INSTALL_LOCK
       value: 'true'
-      description: Skip the web install wizard. The first account that signs up becomes the site administrator.
+      description: Skip the web install wizard. The administrator is created from the install form.
+    - name: GITEA__service__DISABLE_REGISTRATION
+      value: 'true'
+      userEditable: true
+      description: Close self-registration, so only the administrator adds accounts.
+    - name: GITEA_ADMIN_USERNAME
+      valueFrom:
+        userInput:
+          label: Admin username
+          default: owner
+          format: text
+          minLength: 3
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9_.-]{2,31}$'
+          patternDescription: Letters, numbers, dots, hyphens and underscores, 3–32 chars, starting with a letter or number
+      description: Sign-in name of the site administrator.
+    - name: GITEA_ADMIN_EMAIL
+      valueFrom:
+        userInput:
+          label: Admin email
+          format: email
+      description: Email of the site administrator.
+    - name: GITEA_ADMIN_PASSWORD
+      valueFrom:
+        userInput:
+          label: Admin password
+          sensitive: true
+          format: password
+          confirm: true
+          minLength: 10
+          maxLength: 128
+          pattern: '^.{10,128}$'
+          patternDescription: At least 10 characters
+      description: Password of the site administrator. Flui does not store or log it outside this install.
     - name: GITEA__server__DISABLE_SSH
       value: 'true'
       description: Disable git-over-SSH; cloning and pushing go over HTTPS. Keeps the deployment to a single exposed port.
@@ -117,3 +150,11 @@ spec:
 
   auth:
     mode: native
+
+  postInstall:
+    - name: create-admin
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - su git -c 'gitea admin user create --admin --username "$GITEA_ADMIN_USERNAME" --email "$GITEA_ADMIN_EMAIL" --password "$GITEA_ADMIN_PASSWORD" --must-change-password=false' || true

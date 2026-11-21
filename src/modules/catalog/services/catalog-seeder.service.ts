@@ -81,18 +81,40 @@ export class CatalogSeederService implements OnApplicationBootstrap {
       return;
     }
 
+    const seededSlugs: string[] = [];
+    let failed = 0;
     for (const file of files) {
       try {
-        await this.seedFile(join(seedDir, file));
+        seededSlugs.push(await this.seedFile(join(seedDir, file)));
       } catch (err) {
+        failed++;
         this.logger.error(
           `Failed to seed ${file}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
+
+    if (failed > 0 || seededSlugs.length === 0) {
+      this.logger.warn(
+        'Skipped retiring catalog apps without a seed file: the seed set is incomplete',
+      );
+      return;
+    }
+    await this.retireRemovedApps(seededSlugs);
   }
 
-  private async seedFile(path: string): Promise<void> {
+  private async retireRemovedApps(seededSlugs: string[]): Promise<void> {
+    const { retiredSlugs, deleted } =
+      await this.repo.retireSharedSlugsNotIn(seededSlugs);
+    if (retiredSlugs.length > 0) {
+      this.logger.log(
+        `Retired catalog apps without a seed file: ${retiredSlugs.join(', ')}` +
+          (deleted > 0 ? ` (deleted ${deleted} unreferenced rows)` : ''),
+      );
+    }
+  }
+
+  private async seedFile(path: string): Promise<string> {
     const rawYaml = readFileSync(path, 'utf-8');
     const { manifest, checksum } = this.loader.load(rawYaml);
 
@@ -127,7 +149,7 @@ export class CatalogSeederService implements OnApplicationBootstrap {
           `Reconciled ${manifest.metadata.id}@${manifest.metadata.version}: ${Object.keys(drift).join(', ')}`,
         );
       }
-      return;
+      return manifest.metadata.id;
     }
 
     await this.repo.upsert(
@@ -155,5 +177,6 @@ export class CatalogSeederService implements OnApplicationBootstrap {
       `Seeded catalog app ${manifest.metadata.id}@${manifest.metadata.version}` +
         (cleanupSuffix.length ? ` — cleanup: ${cleanupSuffix.join(', ')}` : ''),
     );
+    return manifest.metadata.id;
   }
 }

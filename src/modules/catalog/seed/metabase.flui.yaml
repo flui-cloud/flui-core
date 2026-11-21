@@ -1,0 +1,235 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: metabase
+  name: Metabase
+  description: >
+    Dashboards and business intelligence for the whole team. Connect your
+    PostgreSQL, MariaDB, ClickHouse and other databases, ask questions with a
+    visual builder or SQL, and share dashboards, alerts and embedded charts.
+    Runs the open-source edition, with its own PostgreSQL for questions,
+    dashboards and users, installed and torn down together. The administrator
+    is created at install, so the setup screen is never left open.
+  appKind: APPLICATION
+  category: analytics
+  tags:
+    - bi
+    - dashboards
+    - analytics
+    - sql
+    - reporting
+    - composed
+  license: AGPL-3.0
+  version: '0.65'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/metabase.svg
+  links:
+    website: https://www.metabase.com
+    docs: https://www.metabase.com/docs/latest/
+    source: https://github.com/metabase/metabase
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 4
+    community: 5
+  alternativeTo:
+    - Amazon QuickSight
+    - Microsoft Power BI
+    - Tableau
+    - Looker
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: metabase.internal
+
+  components:
+    - name: db
+      engine: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '17-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: metabase
+        - name: POSTGRES_USER
+          value: metabase
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - metabase
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: metabase
+      dependsOn:
+        - db
+      image:
+        registry: docker.io
+        repository: metabase/metabase
+        tag: v0.65.6
+      ports:
+        - name: http
+          internal: 3000
+          expose: true
+          protocol: http
+      env:
+        - name: MB_DB_TYPE
+          value: postgres
+        - name: MB_DB_HOST
+          value: '{{components.db.host}}'
+        - name: MB_DB_PORT
+          value: '5432'
+        - name: MB_DB_DBNAME
+          value: '{{components.db.env.POSTGRES_DB}}'
+        - name: MB_DB_USER
+          value: '{{components.db.env.POSTGRES_USER}}'
+        - name: MB_DB_PASS
+          value: '{{components.db.env.POSTGRES_PASSWORD}}'
+          secret: true
+        - name: MB_ENCRYPTION_SECRET_KEY
+          valueFrom:
+            generate: secret
+            length: 48
+            format: hex
+          description: Encrypts the connection details of the databases you add. Generated once at install; changing it makes them unreadable.
+        - name: MB_SITE_URL
+          value: 'https://{{self.fqdn}}'
+        - name: MB_ANON_TRACKING_ENABLED
+          value: 'false'
+        - name: MB_CHECK_FOR_UPDATES
+          value: 'false'
+        - name: JAVA_OPTS
+          value: '-XX:MaxRAMPercentage=70'
+          userEditable: true
+          description: JVM options. The heap follows the memory limit.
+        - name: MB_ADMIN_EMAIL
+          valueFrom:
+            userInput:
+              label: Admin email
+              format: email
+          description: Email the administrator signs in with.
+        - name: MB_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 10
+              maxLength: 128
+              pattern: '^(?=.*[0-9])[^"\\]{10,128}$'
+              patternDescription: At least 10 characters with a digit, no quotes or backslashes
+          description: Password of the administrator. Flui does not store or log it outside this install.
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: '2'
+          memory: 3Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 250m
+              max: '4'
+            memory:
+              min: 1Gi
+              max: 6Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 5m
+      healthcheck:
+        type: http
+        path: /api/health
+        port: 3000
+        initialDelay: 60s
+        interval: 15s
+        timeout: 5s
+        retries: 20
+
+  auth:
+    mode: native
+
+  # Metabase keeps its setup screen open to whoever arrives first. The setup
+  # token it publishes until then is used here to create the administrator;
+  # once setup is done the token is gone and the step does nothing.
+  postInstall:
+    - name: create-admin
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - >
+            T=$(curl -s http://localhost:3000/api/session/properties | sed -n
+            's/.*"setup-token":"\([^"]*\)".*/\1/p'); [ -z "$T" ] || curl -s -X
+            POST http://localhost:3000/api/setup -H 'Content-Type:
+            application/json' -d "{\"token\":\"$T\",\"user\":{\"email\":\"$MB_ADMIN_EMAIL\",\"password\":\"$MB_ADMIN_PASSWORD\",\"first_name\":\"Admin\"},\"prefs\":{\"site_name\":\"Metabase\",\"site_locale\":\"en\"}}"
+
+  smokeTest:
+    type: http
+    path: /api/health
+    expectedStatus: 200
+    timeoutSeconds: 180

@@ -9,8 +9,8 @@ metadata:
     alternative to Google Analytics. Track page views and visitors with a
     sub-2KB script and a clean dashboard, with full ownership of your data.
     Ships as the app plus its own PostgreSQL, installed and torn down together.
-    First login uses the default admin account (admin / umami) — change the
-    password immediately from Settings after signing in.
+    Sign in as admin with the password chosen in the install form: it replaces
+    Umami's built-in default at install.
   appKind: APPLICATION
   category: analytics
   tags:
@@ -21,9 +21,9 @@ metadata:
     - cookieless
     - composed
   license: MIT
-  version: '2.20'
-  maintainedAt: '2026-06-15'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/umami.svg
+  version: '3.5'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/umami.svg
   links:
     website: https://umami.is
     docs: https://umami.is/docs
@@ -119,15 +119,13 @@ spec:
       image:
         registry: ghcr.io
         repository: umami-software/umami
-        tag: postgresql-v2.20.2
+        tag: 3.5.0
       ports:
         - name: http
           internal: 3000
           expose: true
           protocol: http
       env:
-        - name: DATABASE_TYPE
-          value: postgresql
         - name: DATABASE_URL
           value: 'postgresql://{{components.db.env.POSTGRES_USER}}:{{components.db.env.POSTGRES_PASSWORD}}@{{components.db.host}}:5432/{{components.db.env.POSTGRES_DB}}'
           secret: true
@@ -137,6 +135,24 @@ spec:
             length: 32
             format: hex
           description: Salt used to hash session/visitor identifiers. Generated once at install.
+        - name: TWO_FACTOR_ENCRYPTION_KEY
+          valueFrom:
+            generate: secret
+            length: 64
+            format: hex
+          description: Encrypts the two-factor authentication secrets of users. Generated once at install; changing it disables everyone's two-factor sign-in.
+        - name: UMAMI_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 10
+              maxLength: 128
+              pattern: '^.{10,128}$'
+              patternDescription: At least 10 characters
+          description: Password of the admin account, which replaces Umami's default one at install. Flui does not store or log it outside this install.
       resources:
         requests:
           cpu: 100m
@@ -173,11 +189,36 @@ spec:
   auth:
     mode: native
 
-  # Built-in admin Umami ships with (no env to set it); surfaced at install.
-  defaultCredentials:
-    username: admin
-    password: umami
-    changeNote: Change the password immediately from Settings → Profile after your first login.
+  # Umami always creates admin/umami and has no setting for it, so the password
+  # is replaced through its own API once it runs.
+  postInstall:
+    - name: replace-default-password
+      exec:
+        component: umami
+        command:
+          - node
+          - -e
+          - |
+            const api = 'http://127.0.0.1:3000/api';
+            const json = { 'Content-Type': 'application/json' };
+            (async () => {
+              const login = await fetch(api + '/auth/login', {
+                method: 'POST',
+                headers: json,
+                body: JSON.stringify({ username: 'admin', password: 'umami' }),
+              });
+              if (!login.ok) return console.log('default password already gone');
+              const { token } = await login.json();
+              const change = await fetch(api + '/me/password', {
+                method: 'POST',
+                headers: { ...json, Authorization: 'Bearer ' + token },
+                body: JSON.stringify({
+                  currentPassword: 'umami',
+                  newPassword: process.env.UMAMI_ADMIN_PASSWORD,
+                }),
+              });
+              console.log('password changed', change.status);
+            })().catch((e) => console.log(e.message));
 
   smokeTest:
     type: http

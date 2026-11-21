@@ -5,6 +5,10 @@ import { CatalogAppDefinitionEntity } from '../entities/catalog-app-definition.e
 import { CatalogAppType } from '../enums/catalog-app-type.enum';
 import { ApplicationKind } from '../../applications/enums/application-kind.enum';
 
+const SHARED_DEF = 'def.ownerUserId IS NULL';
+const SHARED_ROW = '"ownerUserId" IS NULL';
+const NOT_REFERENCED_BY_INSTALLS = `id NOT IN (SELECT "catalogAppDefinitionId" FROM catalog_installs)`;
+
 @Injectable()
 export class CatalogAppDefinitionRepository {
   constructor(
@@ -72,7 +76,7 @@ export class CatalogAppDefinitionRepository {
       .createQueryBuilder('def')
       .where('def.isActive = :isActive', { isActive: true })
       .andWhere('def.isPublished = :isPublished', { isPublished: true })
-      .andWhere('def.ownerUserId IS NULL')
+      .andWhere(SHARED_DEF)
       .andWhere('def.appType IN (:...types)', {
         types: [
           CatalogAppType.STANDALONE,
@@ -107,7 +111,7 @@ export class CatalogAppDefinitionRepository {
       .createQueryBuilder('def')
       .where('def.isActive = :isActive', { isActive: true })
       .andWhere('def.isPublished = :isPublished', { isPublished: true })
-      .andWhere('def.ownerUserId IS NULL')
+      .andWhere(SHARED_DEF)
       .andWhere(':bb = ANY(def.clientFor)', { bb: buildingBlockSlug })
       .orderBy('def.name', 'ASC')
       .getMany();
@@ -148,8 +152,8 @@ export class CatalogAppDefinitionRepository {
   }
 
   /**
-   * After upserting a new version of a catalog app (e.g. bumping stirling-pdf
-   * from 0.34 → 2.9), remove or retire all previous rows of the same slug so
+   * After upserting a new version of a catalog app (e.g. bumping gitea
+   * from 1.26 → 28.4), remove or retire all previous rows of the same slug so
    * the public listing only returns the current version.
    *
    * Two-step to respect the FK constraint on catalog_installs:
@@ -170,7 +174,7 @@ export class CatalogAppDefinitionRepository {
   ): Promise<{ deactivated: number; deleted: number }> {
     const owner = ownerUserId
       ? { clause: '"ownerUserId" = :ownerUserId', params: { ownerUserId } }
-      : { clause: '"ownerUserId" IS NULL', params: {} };
+      : { clause: SHARED_ROW, params: {} };
     const deactivateResult = await this.repository
       .createQueryBuilder()
       .update()
@@ -192,13 +196,51 @@ export class CatalogAppDefinitionRepository {
       .where('slug = :slug', { slug })
       .andWhere(owner.clause, owner.params)
       .andWhere('version != :keepVersion', { keepVersion })
-      .andWhere(
-        `id NOT IN (SELECT "catalogAppDefinitionId" FROM catalog_installs)`,
-      )
+      .andWhere(NOT_REFERENCED_BY_INSTALLS)
       .execute();
 
     return {
       deactivated: deactivateResult.affected ?? 0,
+      deleted: deleteResult.affected ?? 0,
+    };
+  }
+
+  /**
+   * Retires every shared definition whose slug no seed file carries any more,
+   * with the same FK-aware two steps as `cleanupPreviousVersions`: hidden from
+   * every listing and lookup, deleted only when no install row points at it.
+   */
+  async retireSharedSlugsNotIn(
+    keepSlugs: string[],
+  ): Promise<{ retiredSlugs: string[]; deleted: number }> {
+    if (!keepSlugs.length) return { retiredSlugs: [], deleted: 0 };
+
+    const stale = await this.repository
+      .createQueryBuilder('def')
+      .select('DISTINCT def.slug', 'slug')
+      .where(SHARED_DEF)
+      .andWhere('def.slug NOT IN (:...keepSlugs)', { keepSlugs })
+      .andWhere('(def.isActive = true OR def.isPublished = true)')
+      .getRawMany<{ slug: string }>();
+
+    await this.repository
+      .createQueryBuilder()
+      .update()
+      .set({ isActive: false, isPublished: false })
+      .where(SHARED_ROW)
+      .andWhere('slug NOT IN (:...keepSlugs)', { keepSlugs })
+      .execute();
+
+    const deleteResult = await this.repository
+      .createQueryBuilder()
+      .delete()
+      .where(SHARED_ROW)
+      .andWhere('slug NOT IN (:...keepSlugs)', { keepSlugs })
+      .andWhere(NOT_REFERENCED_BY_INSTALLS)
+      .execute();
+
+    return {
+      retiredSlugs: stale.map((r) => r.slug),
       deleted: deleteResult.affected ?? 0,
     };
   }

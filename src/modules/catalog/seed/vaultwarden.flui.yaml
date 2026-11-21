@@ -7,6 +7,10 @@ metadata:
   description: >
     Self-hosted password manager compatible with all official Bitwarden
     clients. Your credentials stay on your own EU server.
+
+    Sign-ups are closed: the owner email from the install form is invited and
+    can create its account. Invite more people from /admin with the admin token
+    shown under Configuration → Sensitive Variables.
   appKind: APPLICATION
   category: security
   tags:
@@ -15,9 +19,9 @@ metadata:
     - bitwarden-compatible
     - gdpr
   license: AGPL-3.0
-  version: '1.35.7'
-  maintainedAt: '2026-04-23'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/vaultwarden.svg
+  version: '1.37.5'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/vaultwarden.svg
   links:
     website: https://github.com/dani-garcia/vaultwarden
     docs: https://github.com/dani-garcia/vaultwarden/wiki
@@ -39,7 +43,7 @@ spec:
   image:
     registry: docker.io
     repository: vaultwarden/server
-    tag: '1.35.7'
+    tag: '1.37.5'
 
   ports:
     - name: http
@@ -61,9 +65,17 @@ spec:
         generate: secret
         length: 48
     - name: SIGNUPS_ALLOWED
-      value: 'true'
+      value: 'false'
       userEditable: true
-      description: Allow new users to register an account
+      description: Allow anyone who reaches the address to register an account. Off by default; invited people can always register.
+    - name: OWNER_EMAIL
+      valueFrom:
+        userInput:
+          label: Owner email
+          format: email
+          pattern: '^[^\s"\\]+@[^\s"\\]+$'
+          patternDescription: A plain email address
+      description: Email invited at install, so its owner can create the first account.
 
   resources:
     requests:
@@ -95,3 +107,12 @@ spec:
     auto: true
     userCustomizable: true
     tls: true
+
+  postInstall:
+    - name: invite-owner
+      exec:
+        command:
+          - /bin/sh
+          - -c
+          - >-
+            j=$(mktemp); curl -sf -c "$j" -o /dev/null -X POST http://127.0.0.1:80/admin --data-urlencode "token=$ADMIN_TOKEN" && curl -sf -b "$j" -o /dev/null -X POST http://127.0.0.1:80/admin/invite -H "Content-Type: application/json" -d "{\"email\":\"$OWNER_EMAIL\"}" && echo invited; rm -f "$j"; true

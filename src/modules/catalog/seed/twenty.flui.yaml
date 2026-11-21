@@ -18,9 +18,9 @@ metadata:
     - salesforce-alternative
     - composed
   license: AGPL-3.0
-  version: '2.14'
-  maintainedAt: '2026-06-15'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/twenty.svg
+  version: '2.59'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/twenty.svg
   links:
     website: https://twenty.com
     docs: https://twenty.com/developers
@@ -114,7 +114,14 @@ spec:
       image:
         registry: docker.io
         repository: library/redis
-        tag: 7-alpine
+        tag: 8-alpine
+      # Queued jobs live in Redis; evicting keys under memory pressure would
+      # silently drop them.
+      command:
+        - docker-entrypoint.sh
+        - redis-server
+        - --maxmemory-policy
+        - noeviction
       ports:
         - name: redis
           internal: 6379
@@ -160,7 +167,7 @@ spec:
       image:
         registry: docker.io
         repository: twentycrm/twenty
-        tag: v2.14.0
+        tag: v2.59.3
       ports:
         - name: http
           internal: 3000
@@ -228,7 +235,7 @@ spec:
       image:
         registry: docker.io
         repository: twentycrm/twenty
-        tag: v2.14.0
+        tag: v2.59.3
       # Same image as the server, run as the background job processor. k8s
       # command overrides the image entrypoint (which the server still runs for
       # DB migrations + cron registration), so the worker only processes jobs.
@@ -244,6 +251,8 @@ spec:
         - name: STORAGE_TYPE
           value: local
         - name: DISABLE_DB_MIGRATIONS
+          value: 'true'
+        - name: DISABLE_CRON_JOBS_REGISTRATION
           value: 'true'
         - name: APP_SECRET
           value: '{{components.server.env.APP_SECRET}}'

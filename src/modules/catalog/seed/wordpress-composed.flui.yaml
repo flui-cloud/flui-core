@@ -19,9 +19,9 @@ metadata:
     - composed
     - php
   license: GPL-2.0-or-later
-  version: '6.5'
-  maintainedAt: '2026-04-24'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/wordpress.svg
+  version: '7.1'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/wordpress.svg
   links:
     website: https://wordpress.org
     docs: https://wordpress.org/documentation/
@@ -123,7 +123,7 @@ spec:
       image:
         registry: docker.io
         repository: library/wordpress
-        tag: '6.5-apache'
+        tag: '7.1-apache'
       ports:
         - name: http
           internal: 80

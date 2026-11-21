@@ -20,9 +20,9 @@ metadata:
     - collaboration
     - composed
   license: MPL-2.0
-  version: '2.16'
-  maintainedAt: '2026-06-15'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/penpot.svg
+  version: '2.18'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/penpot.svg
   links:
     website: https://penpot.app
     docs: https://help.penpot.app
@@ -164,7 +164,7 @@ spec:
       image:
         registry: docker.io
         repository: penpotapp/backend
-        tag: '2.16'
+        tag: '2.18'
       ports:
         - name: http
           internal: 6060
@@ -189,9 +189,28 @@ spec:
         runAsNonRoot: true
       env:
         - name: PENPOT_FLAGS
-          value: enable-registration disable-email-verification enable-login-with-oidc
+          value: disable-registration enable-oidc-registration disable-email-verification enable-login-with-password enable-login-with-oidc enable-prepl-server
+          description: Sign-up with a password is closed; people signing in through Flui single sign-on still get an account. The command interface listens on localhost only and creates the first account.
         - name: PENPOT_PUBLIC_URI
           value: 'https://{{components.frontend.fqdn}}'
+        - name: PENPOT_ADMIN_EMAIL
+          valueFrom:
+            userInput:
+              label: Admin email
+              format: email
+          description: Email of the first account, created at install.
+        - name: PENPOT_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 10
+              maxLength: 128
+              pattern: '^.{10,128}$'
+              patternDescription: At least 10 characters
+          description: Password of the first account. Flui does not store or log it outside this install.
         - name: PENPOT_SECRET_KEY
           valueFrom:
             generate: secret
@@ -259,7 +278,7 @@ spec:
       image:
         registry: docker.io
         repository: penpotapp/exporter
-        tag: '2.16'
+        tag: '2.18'
       ports:
         - name: http
           internal: 6061
@@ -312,7 +331,7 @@ spec:
       image:
         registry: docker.io
         repository: penpotapp/frontend
-        tag: '2.16'
+        tag: '2.18'
       ports:
         - name: http
           internal: 8080
@@ -320,7 +339,7 @@ spec:
           protocol: http
       env:
         - name: PENPOT_FLAGS
-          value: enable-registration disable-email-verification enable-login-with-oidc
+          value: disable-registration enable-login-with-password enable-login-with-oidc
         - name: PENPOT_PUBLIC_URI
           value: 'https://{{self.fqdn}}'
         - name: PENPOT_BACKEND_URI
@@ -389,6 +408,15 @@ spec:
       # OIDC mode — static it would fail the pre-wiring boot (:invalid-sso-config).
       extraEnv:
         PENPOT_OIDC_USER_INFO_SOURCE: userinfo
+
+  postInstall:
+    - name: create-admin
+      exec:
+        component: backend
+        command:
+          - /bin/sh
+          - -c
+          - cd /opt/penpot/backend && python3 manage.py create-profile --skip-tutorial --skip-walkthrough -n Admin -e "$PENPOT_ADMIN_EMAIL" -p "$PENPOT_ADMIN_PASSWORD" || true
 
   smokeTest:
     type: http

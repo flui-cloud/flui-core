@@ -20,7 +20,7 @@ metadata:
   license: BSD-3-Clause
   version: '1.6'
   maintainedAt: '2026-06-17'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/memcached.svg
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/memcached.svg
   links:
     website: https://memcached.org
     docs: https://github.com/memcached/memcached/wiki

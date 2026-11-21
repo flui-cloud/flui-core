@@ -18,9 +18,9 @@ metadata:
     - mysql-compatible
     - building-block
   license: GPL-2.0
-  version: '11'
-  maintainedAt: '2026-04-22'
-  icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/mariadb.svg
+  version: '12.3'
+  maintainedAt: '2026-11-20'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/mariadb.svg
   links:
     website: https://mariadb.org
     docs: https://mariadb.com/kb/en/documentation/
@@ -33,7 +33,7 @@ spec:
   image:
     registry: docker.io
     repository: library/mariadb
-    tag: '11-jammy'
+    tag: '12.3-noble'
 
   ports:
     - name: mysql
