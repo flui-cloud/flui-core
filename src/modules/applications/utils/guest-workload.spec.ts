@@ -8,7 +8,7 @@ import {
   stripSandboxPlacementFields,
   stripSandboxUpdateFields,
 } from './sandbox-placement.util';
-import { withGuestRuntime } from './guest-runtime';
+import { guestEgressBandwidth, withGuestRuntime } from './guest-runtime';
 
 /** F-099 / F-100: what a guest may decide about its workload, and how it runs. */
 describe('a guest workload', () => {
@@ -109,10 +109,50 @@ describe('a guest workload', () => {
       });
     });
 
+    const annotationsOf = (a: object) => {
+      const workload = generator
+        .generateForDockerImage(a as unknown as ApplicationEntity)
+        .find((m) => m.kind === 'Deployment')!;
+      return (
+        load(workload.yaml) as {
+          spec: {
+            template: { metadata: { annotations: Record<string, string> } };
+          };
+        }
+      ).spec.template.metadata.annotations;
+    };
+
     it('changes nothing for a workload on any other cluster', () => {
       const pod = podOf(withGuestRuntime(app, 'some-other-cluster'));
       expect(pod.automountServiceAccountToken).toBeUndefined();
       expect(pod.containers[0].securityContext).toBeUndefined();
+      expect(
+        annotationsOf(withGuestRuntime(app, 'some-other-cluster'))[
+          'kubernetes.io/egress-bandwidth'
+        ],
+      ).toBeUndefined();
     });
+
+    it('caps how fast a guest pod may send', () => {
+      expect(
+        annotationsOf(withGuestRuntime(app, 'guests'))[
+          'kubernetes.io/egress-bandwidth'
+        ],
+      ).toBe('20M');
+    });
+  });
+});
+
+describe('the guest egress ceiling', () => {
+  it('reads a rate from the environment, keeps the default for anything else, and lifts only on off', () => {
+    expect(guestEgressBandwidth({})).toBe('20M');
+    expect(guestEgressBandwidth({ SANDBOX_EGRESS_BANDWIDTH: '5M' })).toBe('5M');
+    expect(guestEgressBandwidth({ SANDBOX_EGRESS_BANDWIDTH: 'lots' })).toBe(
+      '20M',
+    );
+    expect(guestEgressBandwidth({ SANDBOX_EGRESS_BANDWIDTH: '' })).toBe('20M');
+    expect(
+      guestEgressBandwidth({ SANDBOX_EGRESS_BANDWIDTH: 'off' }),
+    ).toBeNull();
   });
 });

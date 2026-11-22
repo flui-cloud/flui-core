@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -69,6 +70,12 @@ import {
   assertPlaceableNamespace,
 } from '../utils/reserved-namespace.util';
 import { InfrastructureOperationEntity } from '../../infrastructure/servers/entities/infrastructure-operations.entity';
+import {
+  AppUdpPort,
+  UDP_PORT_IN_USE,
+  udpPortClash,
+  udpPortClashMessage,
+} from '../../../common/net/public-udp';
 
 /**
  * The certificate states that mean "asked for, not arrived yet" — a window
@@ -126,6 +133,23 @@ export class ApplicationService {
    * of being placed nowhere. The project is the one asked for or the
    * creator's personal one, and the namespace is the project's.
    */
+  private async assertUdpPortsFree(
+    clusterId: string,
+    udpPorts: AppUdpPort[] | undefined,
+  ): Promise<void> {
+    if (!udpPorts?.length) return;
+    const clash = udpPortClash(
+      udpPorts,
+      await this.applicationsRepository.findUdpPortHolders(clusterId),
+    );
+    if (clash) {
+      throw new ConflictException({
+        code: UDP_PORT_IN_USE,
+        message: udpPortClashMessage(clash),
+      });
+    }
+  }
+
   async create(
     clusterId: string,
     dto: CreateApplicationDto,
@@ -166,6 +190,8 @@ export class ApplicationService {
     // 3. Default profile ("small") from JSON
     const resolvedResources = this.resolveResources(dto);
 
+    await this.assertUdpPortsFree(clusterId, dto.udpPorts);
+
     const entity = await this.applicationsRepository.create({
       name: dto.name,
       slug,
@@ -192,6 +218,8 @@ export class ApplicationService {
       replicas: dto.replicas ?? 1,
       port: dto.port,
       portProtocol: dto.portProtocol ?? null,
+      extraPorts: dto.extraPorts?.length ? dto.extraPorts : null,
+      udpPorts: dto.udpPorts?.length ? dto.udpPorts : null,
       configFiles: dto.configFiles ?? null,
       companions: dto.companions ?? null,
       healthProbe: dto.healthProbe ?? null,
@@ -831,6 +859,7 @@ export class ApplicationService {
     dto.scaling = entity.scaling;
     dto.replicas = entity.replicas;
     dto.port = entity.port;
+    dto.udpPorts = entity.udpPorts ?? null;
     dto.currentRevisionId = entity.currentRevisionId;
     dto.imageRef = entity.imageRef;
     dto.startCommand = entity.startCommand ?? null;

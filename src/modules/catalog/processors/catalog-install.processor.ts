@@ -67,6 +67,10 @@ import {
 import { CatalogTemplateResolverService } from '../services/catalog-template-resolver.service';
 import { CatalogSecretGeneratorService } from '../services/catalog-secret-generator.service';
 import { BlockConnectionUrlService } from '../services/block-connection-url.service';
+import {
+  IDENTITY_PROJECT,
+  IdentityPoolResolver,
+} from '../../app-identity/services/identity-pool.resolver';
 import { DbPoolerService } from '../services/db-pooler.service';
 import { isOptionOn, poolerChoice } from '../utils/catalog-options.util';
 import {
@@ -100,6 +104,7 @@ import { EncryptionService } from '../../shared/encryption/services/encryption.s
 import { EndpointModeResolverService } from '../../dns/services/endpoint-mode-resolver.service';
 import { TenancySubdomainService } from '../../dns/services/tenancy-subdomain.service';
 import { SandboxSubdomainService } from '../../dns/services/sandbox-subdomain.service';
+import { extraServicePorts } from '../utils/catalog-ports.util';
 
 const COMPONENT_ENV_REF = /\{\{\s*components\.([^.]+)\.env\.([^.}\s]+)\s*\}\}/g;
 
@@ -192,6 +197,7 @@ export class CatalogInstallProcessor {
     private readonly sandboxTenants: Repository<SandboxTenantEntity>,
     private readonly projects: ProjectsService,
     private readonly poolers: DbPoolerService,
+    private readonly identityPools?: IdentityPoolResolver,
   ) {}
 
   /** The project, and so the namespace, every application of this install lands in. */
@@ -618,11 +624,90 @@ export class CatalogInstallProcessor {
     return { pat, providerDomain };
   }
 
+  /**
+   * The client the app signs its users in with: on the customer identity
+   * install the person chose, or on Flui's own identity provider for Flui
+   * sign-in. Null when the chosen one cannot be reached, so SSO is skipped.
+   */
+  private async registerOidcClient(
+    install: CatalogInstallEntity,
+    fqdn: string,
+    redirectUris: string[],
+  ): Promise<{
+    issuer: string;
+    projectId: string;
+    app: { appId: string; clientId: string; clientSecret?: string };
+  } | null> {
+    if (install.identityInstallId) {
+      if (!this.identityPools) return null;
+      const { pool, issuer } = await this.identityPools.resolve(
+        install.identityInstallId,
+      );
+      const projectId = await pool.ensureProject(IDENTITY_PROJECT);
+      const app = await pool.createClient(projectId, {
+        name: install.slug,
+        redirectUris,
+        postLogoutRedirectUris: [`https://${fqdn}/`],
+      });
+      return { issuer, projectId, app };
+    }
+    const pat = process.env.ZITADEL_SERVICE_ACCOUNT_PAT;
+    if (!pat) {
+      this.logger.warn(
+        `Install ${install.id}: ZITADEL_SERVICE_ACCOUNT_PAT not set — skipping SSO wiring`,
+      );
+      return null;
+    }
+    const cluster = await this.clusterRepository.findOne({
+      where: { id: install.clusterId },
+    });
+    if (!cluster?.masterIpAddress) {
+      this.logger.warn(
+        `Install ${install.id}: cluster master IP missing — skipping SSO wiring`,
+      );
+      return null;
+    }
+    const providerDomain = buildSystemNipHostname(
+      'auth',
+      cluster.masterIpAddress,
+      cluster.nipHostnameToken,
+    );
+    const project = await this.oidcProvider.findProjectByName(
+      pat,
+      providerDomain,
+      'Flui',
+    );
+    if (!project) {
+      this.logger.warn(
+        `Install ${install.id}: Flui OIDC project not found — skipping SSO wiring`,
+      );
+      return null;
+    }
+    const app = await this.oidcProvider.createWebOidcApp(
+      pat,
+      providerDomain,
+      project.id,
+      { name: install.slug, redirectUris },
+    );
+    return { issuer: `https://${providerDomain}`, projectId: project.id, app };
+  }
+
   private async cleanupOidcClient(
     install: CatalogInstallEntity,
   ): Promise<void> {
     if (!install.oidcAppId || !install.oidcProjectId) return;
     try {
+      if (install.identityInstallId) {
+        if (!this.identityPools) return;
+        const { pool } = await this.identityPools.resolve(
+          install.identityInstallId,
+        );
+        await pool.deleteClient(install.oidcProjectId, install.oidcAppId);
+        this.logger.log(
+          `Install ${install.id}: removed its client from identity install ${install.identityInstallId}`,
+        );
+        return;
+      }
       const domain = await this.resolveOidcProviderDomain(install);
       if (!domain) return;
       await this.oidcProvider.deleteOidcApp(
@@ -772,11 +857,15 @@ export class CatalogInstallProcessor {
           `${e.name}: certificateFor "${e.valueFrom.certificateFor}" names no generated key`,
         );
       }
-      byName.get(e.name)!.value = this.secretGenerator.certificate(
+      const pem = this.secretGenerator.certificate(
         key,
         e.valueFrom.commonName ?? install.slug,
         e.valueFrom.validDays ?? DEFAULT_CERTIFICATE_DAYS,
       );
+      byName.get(e.name)!.value =
+        e.valueFrom.encoding === 'base64'
+          ? Buffer.from(pem).toString('base64')
+          : pem;
     }
   }
 
@@ -906,6 +995,9 @@ export class CatalogInstallProcessor {
       replicas: this.resolveReplicas(spec, install.resourceOverrides),
       port: primaryPort?.internal,
       portProtocol: primaryPort?.protocol,
+      extraPorts: extraServicePorts(spec.ports),
+      udpPorts:
+        'udpPorts' in spec && spec.udpPorts?.length ? spec.udpPorts : null,
       allowMasterPlacement,
       healthProbe: this.mapHealthProbe(
         this.resolveHealthcheckTemplates(spec.healthcheck, ctx),
@@ -1895,6 +1987,8 @@ export class CatalogInstallProcessor {
         : 1,
       port: primaryPort?.internal,
       portProtocol: primaryPort?.protocol,
+      extraPorts: extraServicePorts(component.ports),
+      udpPorts: component.udpPorts?.length ? component.udpPorts : null,
       allowMasterPlacement,
       healthProbe: component.healthcheck
         ? this.mapHealthProbe(component.healthcheck, primaryPort?.internal)
@@ -2045,14 +2139,6 @@ export class CatalogInstallProcessor {
       );
       return null;
     }
-    const pat = process.env.ZITADEL_SERVICE_ACCOUNT_PAT;
-    if (!pat) {
-      this.logger.warn(
-        `Install ${install.id}: ZITADEL_SERVICE_ACCOUNT_PAT not set — skipping SSO wiring`,
-      );
-      return null;
-    }
-
     const fresh = await this.installRepo.findById(install.id);
     const fqdn = fresh?.resolvedFqdn;
     if (!fqdn) {
@@ -2061,48 +2147,20 @@ export class CatalogInstallProcessor {
       );
       return null;
     }
-    const cluster = await this.clusterRepository.findOne({
-      where: { id: install.clusterId },
-    });
-    if (!cluster?.masterIpAddress) {
-      this.logger.warn(
-        `Install ${install.id}: cluster master IP missing — skipping SSO wiring`,
-      );
-      return null;
-    }
-
-    const providerDomain = buildSystemNipHostname(
-      'auth',
-      cluster.masterIpAddress,
-      cluster.nipHostnameToken,
-    );
-    const issuer = `https://${providerDomain}`;
-    const project = await this.oidcProvider.findProjectByName(
-      pat,
-      providerDomain,
-      'Flui',
-    );
-    if (!project) {
-      this.logger.warn(
-        `Install ${install.id}: Flui OIDC project not found — skipping SSO wiring`,
-      );
-      return null;
-    }
-
     const paths = auth.oidc.redirectPaths ?? ['/auth/login'];
-    const redirectUris = paths.map((p) => `https://${fqdn}${p}`);
-    const app = await this.oidcProvider.createWebOidcApp(
-      pat,
-      providerDomain,
-      project.id,
-      { name: install.slug, redirectUris },
+    const registered = await this.registerOidcClient(
+      install,
+      fqdn,
+      paths.map((p) => `https://${fqdn}${p}`),
     );
+    if (!registered) return null;
+    const { issuer, app } = registered;
     this.logger.log(
       `Install ${install.id}: registered OIDC client ${app.clientId} for ${fqdn}`,
     );
     await this.installRepo.update(install.id, {
       oidcAppId: app.appId,
-      oidcProjectId: project.id,
+      oidcProjectId: registered.projectId,
     });
 
     const result: OidcWireResult = {
@@ -2137,7 +2195,11 @@ export class CatalogInstallProcessor {
       if (m.issuerUrl) env.push({ name: m.issuerUrl, value: issuer });
       if (m.clientId) env.push({ name: m.clientId, value: app.clientId });
       if (m.clientSecret)
-        env.push({ name: m.clientSecret, value: app.clientSecret ?? '' });
+        env.push({
+          name: m.clientSecret,
+          value: this.encryptionService.encrypt(app.clientSecret ?? ''),
+          secret: true,
+        });
       if (m.enabledFlag) env.push({ name: m.enabledFlag, value: 'true' });
     }
 

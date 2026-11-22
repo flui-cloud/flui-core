@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   BadRequestException,
@@ -31,6 +32,12 @@ import { ApplicationsRepository } from '../../applications/repositories/applicat
 import { ApplicationDeployService } from '../../applications/services/application-deploy.service';
 import { CatalogLinkingService } from './catalog-linking.service';
 import { CatalogService } from './catalog.service';
+import { udpPortsOfSpec } from '../utils/catalog-ports.util';
+import {
+  UDP_PORT_IN_USE,
+  udpPortClash,
+  udpPortClashMessage,
+} from '../../../common/net/public-udp';
 import { ClustersService } from '../../infrastructure/clusters/clusters.service';
 import {
   CatalogManifest,
@@ -152,6 +159,7 @@ export class CatalogInstallerService {
     // requests of every component this install will create and refuse if the cluster
     // cannot fit them within its 10% safety margin (unless autoscaling absorbs it).
     await this.assertClusterHasCapacity(definition, dto);
+    await this.assertUdpPortsFree(definition, dto.clusterId);
 
     const installSlug = `${definition.slug}-${this.randomSuffix()}`;
 
@@ -173,6 +181,7 @@ export class CatalogInstallerService {
       allowMasterPlacement: dto.allowMasterPlacement ?? false,
       requestedExposure: dto.exposure,
       authMode: dto.authMode,
+      identityInstallId: dto.identityInstallId ?? null,
       options: resolveInstallOptions(definition.manifest.spec, dto.options),
       userInputs: dto.userInputs ?? {},
       envOverrides: dto.envOverrides ?? {},
@@ -222,6 +231,24 @@ export class CatalogInstallerService {
     );
 
     return { install, operation: savedOperation };
+  }
+
+  private async assertUdpPortsFree(
+    definition: CatalogAppDefinitionEntity,
+    clusterId: string,
+  ): Promise<void> {
+    const requested = udpPortsOfSpec(definition.manifest.spec);
+    if (!requested.length) return;
+    const clash = udpPortClash(
+      requested,
+      await this.applicationsRepo.findUdpPortHolders(clusterId),
+    );
+    if (clash) {
+      throw new ConflictException({
+        code: UDP_PORT_IN_USE,
+        message: udpPortClashMessage(clash),
+      });
+    }
   }
 
   /**
@@ -805,10 +832,18 @@ export class CatalogInstallerService {
     dto: InstallCatalogAppDto,
   ): void {
     const spec = definition.manifest.spec;
-    if (spec.type !== CatalogAppType.STANDALONE) return;
+    const envVars =
+      spec.type === CatalogAppType.COMPOSED
+        ? spec.components
+            .filter(
+              (c) =>
+                !c.when?.option || isOptionOn(spec, dto.options, c.when.option),
+            )
+            .flatMap((c) => c.env ?? [])
+        : (spec.env ?? []);
 
     const errors: string[] = [];
-    for (const envVar of spec.env) {
+    for (const envVar of envVars) {
       const valueFrom = envVar.valueFrom;
       if (!valueFrom || !('userInput' in valueFrom)) continue;
       errors.push(

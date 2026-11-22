@@ -79,6 +79,7 @@ describe('the fence, asked about every tool in the registry', () => {
     expect(readWrites).toEqual(
       [
         'app_manifest_validate POST /applications/manifest/validate → full',
+        'catalog_udp_ports POST /catalog/:slug/udp-ports → closed',
         'credential_scope_request PATCH /auth/api-keys/:id/scopes → closed',
         'get_started POST /auth/agent-skill/check-in → full',
         'github_setup POST /repositories/github/setup/github-app/manifest-start → closed',

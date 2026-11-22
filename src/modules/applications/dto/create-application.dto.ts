@@ -13,14 +13,20 @@ import {
   ValidateNested,
   MaxLength,
   Matches,
+  ArrayMaxSize,
 } from 'class-validator';
 import { CompanionsSpec } from '../services/application-manifest-generator.service';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Sensitivity } from '../../mask/decorators/sensitivity.decorator';
 import { Type } from 'class-transformer';
 import { ApplicationCategory } from '../enums/application-category.enum';
 import { ApplicationKind } from '../enums/application-kind.enum';
 import { ApplicationSourceType } from '../enums/application-source-type.enum';
 import { ApplicationExposure } from '../enums/application-exposure.enum';
+import {
+  APP_UDP_PORT_MAX,
+  APP_UDP_PORT_MIN,
+} from '../../../common/net/public-udp';
 import {
   ApplicationHealthProbe,
   ApplicationSecurityContext,
@@ -128,6 +134,42 @@ class ApplicationScalingDto {
   @Min(1)
   @Max(100)
   targetMemory?: number;
+}
+
+export class AppServicePortDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'http' })
+  @IsString()
+  @Matches(/^[a-z][a-z0-9-]{0,14}$/, {
+    message:
+      'A port name is a lowercase letter followed by up to 14 lowercase letters, digits or hyphens',
+  })
+  name: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 5280 })
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  port: number;
+}
+
+export class AppUdpPortDto {
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: 'media' })
+  @IsString()
+  @Matches(/^[a-z][a-z0-9-]{0,14}$/, {
+    message:
+      'A UDP port name is a lowercase letter followed by up to 14 lowercase letters, digits or hyphens',
+  })
+  name: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiProperty({ example: APP_UDP_PORT_MIN })
+  @IsInt()
+  @Min(APP_UDP_PORT_MIN)
+  @Max(APP_UDP_PORT_MAX)
+  port: number;
 }
 
 export class CreateApplicationDto {
@@ -247,6 +289,29 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsIn(['http', 'tcp'])
   portProtocol?: 'http' | 'tcp';
+
+  @ApiPropertyOptional({
+    type: () => [AppServicePortDto],
+    description:
+      'Internal TCP ports beyond the main one, reachable on the same in-cluster address under their own names. Never public. Fixed at creation.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AppServicePortDto)
+  extraPorts?: AppServicePortDto[];
+
+  @ApiPropertyOptional({
+    type: () => [AppUdpPortDto],
+    description: `Public UDP ports, ${APP_UDP_PORT_MIN}-${APP_UDP_PORT_MAX}, published on the node the app runs on. An app never opens them: each is reachable only once the cluster firewall has an inbound UDP rule for it. Fixed at creation.`,
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AppUdpPortDto)
+  udpPorts?: AppUdpPortDto[];
 
   @ApiPropertyOptional({
     description:

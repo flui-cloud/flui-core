@@ -87,6 +87,7 @@ export interface CatalogSpecStandalone {
    */
   imagePullPolicy?: 'Always' | 'IfNotPresent';
   ports: CatalogPort[];
+  udpPorts?: CatalogUdpPort[];
   volumes?: CatalogVolume[];
   /**
    * Placement strategy for the app's persistent volumes. Defaults to
@@ -338,6 +339,7 @@ export interface CatalogComponent {
   /** Set only on components that ARE a datastore. Omit for web/app components. */
   engine?: CatalogDbEngine;
   ports?: CatalogPort[];
+  udpPorts?: CatalogUdpPort[];
   volumes?: CatalogVolume[];
   persistence?: CatalogPersistence;
   env: CatalogEnvVar[];
@@ -396,6 +398,15 @@ export interface CatalogPort {
   internal: number;
   expose: boolean;
   protocol?: 'http' | 'tcp';
+}
+
+/**
+ * A public UDP port, published on the node the app runs on. The install never
+ * opens it: it is reachable only once the cluster firewall has a rule for it.
+ */
+export interface CatalogUdpPort {
+  name: string;
+  port: number;
 }
 
 export interface CatalogVolume {
@@ -477,6 +488,8 @@ export interface CatalogValueFromCertificate {
   certificateFor: string;
   commonName?: string;
   validDays?: number;
+  /** `pem` (default), or `base64` of the PEM for a value that sits inside JSON or another single-line format. */
+  encoding?: 'pem' | 'base64';
 }
 
 /** The bcrypt hash of a generated or entered secret of the same component, e.g. for an htpasswd file. */

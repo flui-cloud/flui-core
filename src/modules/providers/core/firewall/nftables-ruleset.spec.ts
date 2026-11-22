@@ -81,6 +81,66 @@ describe('renderFluiNftRuleset', () => {
     expect(out).toContain('ip saddr 203.0.113.7/32 accept');
   });
 
+  describe('application UDP ports', () => {
+    const prerouting = (rules: FirewallRule[]) => {
+      const out = renderFluiNftRuleset(rules, HOST_OPTS);
+      return out.slice(
+        out.indexOf('chain prerouting {'),
+        out.indexOf('chain forward {'),
+      );
+    };
+
+    it('closes the application range ahead of the DNAT when no rule opens it', () => {
+      expect(prerouting([])).toContain('udp dport 10000-10999 drop');
+    });
+
+    it('lets a cluster firewall rule open a port before the range is closed', () => {
+      const chain = prerouting([
+        {
+          description: 'Video calls',
+          direction: 'in',
+          protocol: 'udp',
+          port: '10000',
+          sourceIps: ['0.0.0.0/0', '::/0'],
+        },
+      ]);
+      const accept = chain.indexOf('udp dport 10000 accept');
+      expect(accept).toBeGreaterThanOrEqual(0);
+      expect(chain.indexOf('udp dport 10000-10999 drop')).toBeGreaterThan(
+        accept,
+      );
+    });
+
+    it('keeps the sources a rule is limited to', () => {
+      const chain = prerouting([
+        {
+          description: 'Office only',
+          direction: 'in',
+          protocol: 'udp',
+          port: '10000',
+          sourceIps: ['203.0.113.0/24'],
+        },
+      ]);
+      expect(chain).toContain(
+        'ip saddr { 203.0.113.0/24 } udp dport 10000 accept',
+      );
+      expect(chain).not.toMatch(/\tudp dport 10000 accept/);
+    });
+
+    it('ignores TCP rules on the same port', () => {
+      const chain = prerouting([
+        {
+          description: 'Web',
+          direction: 'in',
+          protocol: 'tcp',
+          port: '10000',
+          sourceIps: ['0.0.0.0/0'],
+        },
+      ]);
+      expect(chain).not.toContain('tcp dport 10000 accept');
+    });
+  });
+
   describe('NodePort exposure', () => {
     // NodePort packets are DNAT'd by kube-proxy in prerouting and then forwarded to a
     // pod, so they never traverse `input` and the default-drop there does not cover

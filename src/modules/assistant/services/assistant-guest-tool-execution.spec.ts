@@ -145,12 +145,18 @@ describe('a guest resuming a conversation it wrote itself', () => {
       hiddenButInScope.map((d) => d.name).sort((a, b) => a.localeCompare(b)),
     ).toEqual(
       [
+        'catalog_udp_ports',
         'credential_scope_request',
         'dns_acme_resolvers',
         'dns_acme_resolvers_pin',
         'dns_wildcard_publish',
         'dns_wildcard_status',
         'github_setup',
+        // Closed to guests until the trial may send invitations at all.
+        'identity_installs_list',
+        'identity_user_block',
+        'identity_user_invite',
+        'identity_users_list',
         'log_sources',
         'template_get',
         'topology_get',

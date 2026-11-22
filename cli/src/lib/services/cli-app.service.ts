@@ -3,6 +3,7 @@ import { ConfigStorage } from '../config-storage';
 import { FollowedOperation, followOperation } from '../follow-operation';
 import type { EndpointSyncOutcome } from 'src/modules/dns/utils/endpoint-sync.core';
 import type { CertificatePhase } from 'src/modules/dns/utils/certificate-phase.core';
+import type { UdpPortsView } from '../udp-ports';
 
 export interface AppSummary {
   id: string;
@@ -543,6 +544,10 @@ export class CliAppService {
 
   async getRuntime(appId: string): Promise<AppRuntime> {
     return this.apiClient.get<AppRuntime>(`/applications/${appId}/runtime`);
+  }
+
+  async getUdpPorts(appId: string): Promise<UdpPortsView> {
+    return this.apiClient.get<UdpPortsView>(`/applications/${appId}/udp-ports`);
   }
 
   async getAvailability(appId: string): Promise<AppAvailability> {

@@ -10,6 +10,4 @@ spec:
   selector:
     app: {{SLUG}}
   ports:
-    - port: {{PORT}}
-      targetPort: {{PORT}}
-      protocol: TCP
+{{SERVICE_PORTS}}

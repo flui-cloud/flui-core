@@ -1,3 +1,8 @@
+import { buildQueueScaledObject } from '../../messaging/keda/keda.manifest';
+import {
+  EGRESS_BANDWIDTH_ANNOTATION,
+  guestEgressBandwidth,
+} from '../utils/guest-runtime';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -45,6 +50,7 @@ import {
   databaseHaServes,
 } from '../../postgres-ha/postgres-ha.types';
 import { REPLICATED_STORAGE_CLASS } from '../../replicated-volumes/replicated-volumes.constants';
+import { isAppUdpPort } from '../../../common/net/public-udp';
 
 export interface GeneratedManifest {
   kind: ApplicationResourceKind;
@@ -312,7 +318,7 @@ export class ApplicationManifestGeneratorService {
     }
 
     if (app.scaling?.enabled && !isStatefulSet) {
-      manifests.push(this.generateHpa(app));
+      manifests.push(this.generateAutoscaler(app));
     }
 
     this.logger.log(
@@ -566,7 +572,7 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
       .replaceAll('{{POD_LABELS_BLOCK}}', this.renderLabelsBlock(labels, 8))
       .replaceAll('{{ANNOTATIONS_BLOCK}}', this.renderLabelsBlock(annotations))
-      .replaceAll('{{REPLICAS}}', String(app.replicas ?? 1))
+      .replaceAll('{{REPLICAS}}', String(this.startingReplicas(app)))
       .replaceAll('{{STRATEGY_BLOCK}}\n', this.renderStrategyBlock(app))
       .replaceAll('{{IMAGE}}', imageRef)
       .replaceAll('{{PULL_POLICY}}', config.pullPolicy || 'IfNotPresent')
@@ -574,7 +580,7 @@ export class ApplicationManifestGeneratorService {
         '{{POD_ANNOTATIONS_BLOCK}}',
         this.renderLabelsBlock(this.buildPodAnnotations(app, config), 8),
       )
-      .replaceAll('{{PORTS_BLOCK}}', this.renderPortsBlock(app.port))
+      .replaceAll('{{PORTS_BLOCK}}', this.renderPortsBlock(app))
       .replaceAll('{{ENV_BLOCK}}', this.renderEnvBlock(app))
       .replaceAll('{{CPU_REQUEST}}', cpuRequest)
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
@@ -663,7 +669,7 @@ export class ApplicationManifestGeneratorService {
         '{{POD_ANNOTATIONS_BLOCK}}',
         this.renderLabelsBlock(this.buildPodAnnotations(app, config), 8),
       )
-      .replaceAll('{{PORTS_BLOCK}}', this.renderPortsBlock(app.port))
+      .replaceAll('{{PORTS_BLOCK}}', this.renderPortsBlock(app))
       .replaceAll('{{ENV_BLOCK}}', this.renderEnvBlock(app))
       .replaceAll('{{CPU_REQUEST}}', cpuRequest)
       .replaceAll('{{CPU_LIMIT}}', cpuLimit)
@@ -844,7 +850,7 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{SLUG}}', app.slug)
       .replaceAll('{{NAMESPACE}}', app.k8sNamespace)
       .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
-      .replaceAll('{{PORT}}', String(app.port));
+      .replaceAll('{{SERVICE_PORTS}}', this.renderServicePorts(app));
     if (databaseHaServes(app.databaseHa)) {
       const selector = Object.entries(databaseHaPrimarySelector(app.databaseHa))
         .map(([k, v]) => `    ${k}: ${v}`)
@@ -863,6 +869,27 @@ export class ApplicationManifestGeneratorService {
     };
   }
 
+  /**
+   * With one port the block is unnamed, exactly as before; a Service with
+   * several ports must name each of them.
+   */
+  private renderServicePorts(app: ApplicationEntity): string {
+    const entry = (port: number, name?: string) =>
+      [
+        ...(name ? [`    - name: ${name}`] : []),
+        `    ${name ? ' ' : '-'} port: ${port}`,
+        `      targetPort: ${port}`,
+        '      protocol: TCP',
+      ].join('\n');
+    const extra = (app.extraPorts ?? []).filter((p) => p.port !== app.port);
+    if (!extra.length) return entry(app.port!);
+    const mainName = extra.some((p) => p.name === 'main') ? 'primary' : 'main';
+    return [
+      entry(app.port!, mainName),
+      ...extra.map((p) => entry(p.port, p.name)),
+    ].join('\n');
+  }
+
   private generateHeadlessService(app: ApplicationEntity): GeneratedManifest {
     const labels = this.buildLabels(app);
 
@@ -871,7 +898,7 @@ export class ApplicationManifestGeneratorService {
       .replaceAll('{{SLUG}}', app.slug)
       .replaceAll('{{NAMESPACE}}', app.k8sNamespace)
       .replaceAll('{{LABELS_BLOCK}}', this.renderLabelsBlock(labels))
-      .replaceAll('{{PORT}}', String(app.port));
+      .replaceAll('{{SERVICE_PORTS}}', this.renderServicePorts(app));
 
     return {
       kind: ApplicationResourceKind.SERVICE,
@@ -938,7 +965,33 @@ export class ApplicationManifestGeneratorService {
     if (!app.scaling?.enabled || app.workloadKind === 'StatefulSet')
       return null;
     assertManifestInputs(app);
-    return this.generateHpa(app);
+    return this.generateAutoscaler(app);
+  }
+
+  private generateAutoscaler(app: ApplicationEntity): GeneratedManifest {
+    const queue = app.scaling?.queue;
+    if (!queue) return this.generateHpa(app);
+    return {
+      kind: ApplicationResourceKind.SCALED_OBJECT,
+      name: `${app.slug}-queue`,
+      apiVersion: 'keda.sh/v1alpha1',
+      yaml: buildQueueScaledObject({
+        deployment: app.slug,
+        namespace: app.k8sNamespace,
+        account: queue.account,
+        stream: queue.stream,
+        consumer: queue.consumer,
+        lagThreshold: queue.lagThreshold,
+        minReplicas: queue.min,
+        maxReplicas: queue.max,
+      }),
+    };
+  }
+
+  /** A worker scaled on its queue starts at its floor: KEDA wakes it when work arrives. */
+  private startingReplicas(app: ApplicationEntity): number {
+    const queue = app.scaling?.enabled ? app.scaling.queue : undefined;
+    return queue ? queue.min : (app.replicas ?? 1);
   }
 
   private generateHpa(app: ApplicationEntity): GeneratedManifest {
@@ -1050,14 +1103,20 @@ export class ApplicationManifestGeneratorService {
   }
 
   /**
-   * A replicated volume is attached to one node at a time, so the new pod of a
-   * rolling update would wait for a volume the old pod never lets go.
+   * A replicated volume is attached to one node at a time, and a host port is
+   * held by one pod per node: either way the new pod of a rolling update would
+   * wait for something the old pod never lets go.
    */
   private renderStrategyBlock(app: ApplicationEntity): string {
     const replicated = (app.volumes ?? []).some(
       (v) => this.resolveStorageClass(app, v) === REPLICATED_STORAGE_CLASS,
     );
-    return replicated ? '  strategy:\n    type: Recreate\n' : '';
+    const holdsHostPort =
+      !app.securityContext?.guestBaseline &&
+      (app.udpPorts ?? []).some((p) => isAppUdpPort(p.port));
+    return replicated || holdsHostPort
+      ? '  strategy:\n    type: Recreate\n'
+      : '';
   }
 
   private nodePlacement(app: ApplicationEntity): {
@@ -1219,13 +1278,29 @@ export class ApplicationManifestGeneratorService {
     );
   }
 
-  private renderPortsBlock(port?: number): string {
-    if (!port) return '';
-    return (
-      '          ports:\n' +
-      `            - containerPort: ${port}\n` +
-      '              protocol: TCP'
-    );
+  private renderPortsBlock(app: ApplicationEntity): string {
+    const entries: string[] = [];
+    if (app.port) {
+      entries.push(
+        `            - containerPort: ${app.port}\n` +
+          '              protocol: TCP',
+      );
+    }
+    // A guest pod runs under the baseline Pod Security level, which refuses a
+    // host port outright: publishing one would keep the pod from starting.
+    if (!app.securityContext?.guestBaseline) {
+      for (const udp of app.udpPorts ?? []) {
+        if (!isAppUdpPort(udp.port)) continue;
+        entries.push(
+          `            - name: ${udp.name}\n` +
+            `              containerPort: ${udp.port}\n` +
+            `              hostPort: ${udp.port}\n` +
+            '              protocol: UDP',
+        );
+      }
+    }
+    if (!entries.length) return '';
+    return ['          ports:', ...entries].join('\n');
   }
 
   private renderEnvBlock(app: ApplicationEntity): string {
@@ -1686,9 +1761,13 @@ export class ApplicationManifestGeneratorService {
     // app pointing at the app's own port, which made vmagent poll `/metrics` on
     // thousands of ports that serve application traffic. Edge HTTP signals come from
     // Traefik instead; a per-app opt-in lands with the observability manifest block.
+    const egress = app.securityContext?.guestBaseline
+      ? guestEgressBandwidth()
+      : null;
     return {
       'flui.cloud/config-hash': this.computeConfigHash(app, config),
       [ENV_HASH_ANNOTATION]: envHashOf(restartEnvOf(app)),
+      ...(egress ? { [EGRESS_BANDWIDTH_ANNOTATION]: egress } : {}),
     };
   }
 

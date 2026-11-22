@@ -36,6 +36,10 @@ import type { AppMaintenance } from '../../infrastructure/maintenance/maintenanc
 import type { AppBackupDecision } from '../../backups/utils/app-backup-decision.rules';
 import type { PoolerSpec } from '../utils/db-pooler.core';
 import type { DatabaseHaSpec } from '../../postgres-ha/postgres-ha.types';
+import type {
+  AppServicePort,
+  AppUdpPort,
+} from '../../../common/net/public-udp';
 
 @Entity('applications')
 export class ApplicationEntity {
@@ -150,6 +154,13 @@ export class ApplicationEntity {
 
   @Column({ type: 'varchar', length: 8, nullable: true })
   portProtocol?: 'http' | 'tcp';
+
+  /** Internal TCP ports beyond `port`, served by the same Service under their names. */
+  @Column({ type: 'json', nullable: true })
+  extraPorts?: AppServicePort[] | null;
+
+  @Column({ type: 'json', nullable: true })
+  udpPorts?: AppUdpPort[] | null;
 
   @Column({ type: 'json', nullable: true })
   configFiles?: Array<{ path: string; content: string }>;

@@ -1,3 +1,4 @@
+import { AppUdpPortDto } from './create-application.dto';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   AVAILABILITY_KEYS,
@@ -381,6 +382,15 @@ export class ApplicationResponseDto {
 
   @ApiPropertyOptional()
   port?: number;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    type: () => [AppUdpPortDto],
+    nullable: true,
+    description:
+      'Public UDP ports published on the node. Whether each is open: GET /applications/:id/udp-ports.',
+  })
+  udpPorts?: AppUdpPortDto[] | null;
 
   @ApiPropertyOptional()
   currentRevisionId?: string;

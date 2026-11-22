@@ -1,4 +1,5 @@
 import { FirewallRule } from '../../interfaces/firewall-provider.interface';
+import { APP_UDP_PORT_RANGE } from '../../../../common/net/public-udp';
 
 export interface NftRenderOptions {
   supportsSshAllowlist: boolean;
@@ -182,6 +183,17 @@ export function renderFluiNftRuleset(
         : renderInboundRule(r),
     );
 
+  // An application's UDP port is published on the node and DNATed to its pod
+  // in prerouting, so it never reaches `input`: without this it would be public
+  // with no rule at all, and the cluster firewall would no longer be the one
+  // place that opens a port.
+  const appUdpLines = [
+    ...rules
+      .filter((r) => r.direction === 'in' && r.protocol === 'udp')
+      .flatMap(renderInboundRule),
+    `\t\tudp dport ${APP_UDP_PORT_RANGE} drop comment "application UDP ports open only through the cluster firewall"`,
+  ];
+
   const podCidr = IPV4_CIDR_RE.test(options.podCidr ?? '')
     ? (options.podCidr as string)
     : DEFAULT_POD_CIDR;
@@ -286,6 +298,8 @@ export function renderFluiNftRuleset(
     ...(wgOnlyLines.length ? ['', ...wgOnlyLines] : []),
     '',
     `\t\ttcp dport ${NODEPORT_RANGE} drop comment "NodePort services are cluster-internal, never public"`,
+    '',
+    ...appUdpLines,
     '\t}',
     '',
     '\tchain forward {',

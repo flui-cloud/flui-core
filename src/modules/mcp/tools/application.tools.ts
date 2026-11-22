@@ -309,6 +309,15 @@ export const APPLICATION_TOOLS: ToolDef[] = [
     run: (args, ctx) => ctx.api.get(`/applications/${enc(args.id)}/egress`),
   }),
   defineTool({
+    name: 'app_udp_ports',
+    routes: ['GET /applications/:id/udp-ports'],
+    description:
+      'The public UDP ports an application publishes (video calls, game servers, VPNs) and whether the cluster firewall lets each one in. Flui never opens a UDP port on its own: a closed one is opened by someone who manages the cluster, from Cluster Firewalls in the dashboard. When a port is closed, say that and who can open it; never offer to open it yourself. unmanaged means the cluster has no firewall Flui manages; not-published means a trial app, which never gets one.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) => ctx.api.get(`/applications/${enc(args.id)}/udp-ports`),
+  }),
+  defineTool({
     name: 'app_debug',
     summary:
       'Why an application is failing or stuck: pod phase, crash reasons, missing secrets, recent events.',

@@ -3,6 +3,11 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { CliAppService } from '../../lib/services/cli-app.service';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
+import {
+  udpPortLine,
+  udpPortsHint,
+  type UdpPortsView,
+} from '../../lib/udp-ports';
 
 export default class AppStatus extends Command {
   static readonly description = 'Show live runtime status of an application';
@@ -41,17 +46,22 @@ export default class AppStatus extends Command {
       const { id: clusterId } = await resolveClusterRef(flags.cluster);
       const service = await CliAppService.create(clusterId);
       const app = await service.getAppByName(args.name);
-      const [runtime, endpoints, availability] = await Promise.all([
+      const [runtime, endpoints, availability, udpPorts] = await Promise.all([
         service.getRuntime(app.id),
         service.listEndpoints(app.id).catch(() => []),
         service.getAvailability(app.id).catch(() => null),
+        service.getUdpPorts(app.id).catch(() => null),
       ]);
 
       spinner.stop();
 
       if (flags.output === 'json') {
         console.log(
-          JSON.stringify({ app, runtime, endpoints, availability }, null, 2),
+          JSON.stringify(
+            { app, runtime, endpoints, availability, udpPorts },
+            null,
+            2,
+          ),
         );
         return;
       }
@@ -129,6 +139,8 @@ export default class AppStatus extends Command {
         for (const e of endpoints) this.printEndpoint(e);
       }
 
+      this.printUdpPorts(udpPorts);
+
       if (availability) {
         console.log(chalk.cyan('\n  Availability\n'));
         console.log(
@@ -147,6 +159,17 @@ export default class AppStatus extends Command {
       console.log(chalk.red(`\n  Error: ${error.message}\n`));
       this.exit(1);
     }
+  }
+
+  private printUdpPorts(view: UdpPortsView | null): void {
+    if (!view?.ports.length) return;
+    console.log(chalk.cyan('\n  UDP ports\n'));
+    for (const p of view.ports) {
+      const line = udpPortLine(p);
+      console.log(`  ${p.state === 'open' ? line : chalk.yellow(line)}`);
+    }
+    const hint = udpPortsHint(view);
+    if (hint) console.log(`  ${chalk.dim(hint)}`);
   }
 
   private printEndpoint(e: {

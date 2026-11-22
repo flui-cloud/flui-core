@@ -117,6 +117,9 @@ import { VolumeExportService } from '../providers/services/volume-export.service
 import { StatefulSetVolumeSwapService } from './services/statefulset-volume-swap.service';
 import { SpareVolumesService } from './services/spare-volumes.service';
 import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
+import { ClusterFirewallEntity } from '../infrastructure/firewalls/entities/cluster-firewall.entity';
+import { AppUdpPortsService } from './services/app-udp-ports.service';
+import { AppUdpPortsController } from './controllers/app-udp-ports.controller';
 
 @Module({
   imports: [
@@ -150,6 +153,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
       // Bound at TypeORM level for the same reason: ApplicationAccessService
       // pins sandbox guests to their tenancy cluster.
       SandboxTenantEntity,
+      ClusterFirewallEntity,
     ]),
     BullModule.registerQueue({ name: 'application-deploy' }),
     BullModule.registerQueue({ name: 'app-build' }),
@@ -179,6 +183,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
   ],
   controllers: [
     ApplicationsController,
+    AppUdpPortsController,
     ApplicationReleasesController,
     ApplicationSnapshotsController,
     VariablesController,
@@ -189,6 +194,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     ShowcaseController,
   ],
   providers: [
+    AppUdpPortsService,
     ShowcaseService,
     // IAM enforcement (resource-aware app access)
     ApplicationAccessService,
@@ -265,6 +271,7 @@ import { FluiRegistryModule } from '../flui-registry/flui-registry.module';
     GhcrSecretRefreshProcessor,
   ],
   exports: [
+    AppUdpPortsService,
     // Re-exported so the guards that hang off this module's repositories can
     // ask IAM the same question the rest of the product asks it. The alternative
     // was a second, weaker authority derived beside the engine — which is

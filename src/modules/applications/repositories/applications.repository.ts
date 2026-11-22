@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository as TypeOrmRepository, In, IsNull } from 'typeorm';
+import { Repository as TypeOrmRepository, In, IsNull, Not } from 'typeorm';
 import { ApplicationEntity } from '../entities/application.entity';
 import { isPlatformOwned } from '../constants/app-provenance';
 import { ApplicationStatus } from '../enums/application-status.enum';
@@ -162,6 +162,15 @@ export class ApplicationsRepository {
       where: { clusterId, k8sNamespace, deletedAt: IsNull() },
       select: { slug: true, userId: true, projectId: true, k8sNamespace: true },
       withDeleted: false,
+    });
+  }
+
+  async findUdpPortHolders(
+    clusterId: string,
+  ): Promise<Array<Pick<ApplicationEntity, 'id' | 'slug' | 'udpPorts'>>> {
+    return this.repository.find({
+      where: { clusterId, udpPorts: Not(IsNull()), deletedAt: IsNull() },
+      select: { id: true, slug: true, udpPorts: true },
     });
   }
 

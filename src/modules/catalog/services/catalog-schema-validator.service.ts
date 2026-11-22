@@ -9,6 +9,7 @@ import {
   keyMaterialProblems,
 } from '../utils/catalog-key-material';
 import { configFileTemplateProblems } from '../utils/catalog-config-file-templates';
+import { udpPortProblems } from '../utils/catalog-ports.util';
 
 const KEY_MATERIAL_PLACEHOLDER = { generate: 'secret', length: 32 };
 
@@ -27,6 +28,8 @@ export class CatalogSchemaValidatorService {
     // Stripped and re-attached unvalidated until the published spec carries
     // it; the install path does its own checking of the shape.
     'companions',
+    // Checked by `udpPortProblems` instead.
+    'udpPorts',
   ];
 
   /** Spec-level fields forward-compatible on a building block only, where the published schema does not have them yet. */
@@ -120,6 +123,7 @@ export class CatalogSchemaValidatorService {
       ...(Array.isArray(spec.components)
         ? configFileTemplateProblems(spec.components)
         : []),
+      ...udpPortProblems(spec),
     ];
     if (errors.length) {
       throw new BadRequestException({
