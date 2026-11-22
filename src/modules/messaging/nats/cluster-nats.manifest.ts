@@ -1,6 +1,8 @@
 export const NATS_NAMESPACE = 'flui-system';
 export const NATS_NAME = 'flui-nats';
-export const NATS_IMAGE = 'docker.io/library/nats:2.15';
+// The alpine variant: the server fetches its accounts from the API over HTTPS,
+// and the scratch image carries no certificate authorities to verify it with.
+export const NATS_IMAGE = 'docker.io/library/nats:2.15-alpine';
 export const NATS_CLIENT_PORT = 4222;
 export const NATS_MONITOR_PORT = 8222;
 const LABELS = {

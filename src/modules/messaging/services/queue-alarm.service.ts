@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { Cron } from '@nestjs/schedule';
@@ -23,8 +24,15 @@ import { NatsConnectionService } from './nats-connection.service';
 export const QUEUE_GROWING_ALERT = 'FluiQueueGrowing';
 const QUEUE_KIND = 'queue';
 
-const fingerprintOf = (b: Pick<QueueBacklog, 'account' | 'queue'>): string =>
-  `${QUEUE_KIND}:${b.account}:${b.queue}`;
+/** Hashed: an account key alone is 56 characters, and the column holds 64. */
+export const fingerprintOf = (
+  b: Pick<QueueBacklog, 'account' | 'queue'>,
+): string => {
+  const digest = createHash('sha256')
+    .update([b.account, b.queue].join('|'))
+    .digest('hex');
+  return `${QUEUE_KIND}:${digest.slice(0, 40)}`;
+};
 
 interface Owner {
   applicationId: string;

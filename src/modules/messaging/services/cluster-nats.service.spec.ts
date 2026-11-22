@@ -83,6 +83,9 @@ describe('the NATS a cluster’s applications share', () => {
       'resolver: URL(https://api.example.com/api/v1/messaging/nats/accounts/)',
     );
     expect(conf).not.toMatch(/S[OAU][A-Z2-7]{50,}/);
+    expect(applied[2].spec.template.spec.containers[0].image).toMatch(
+      /-alpine$/,
+    );
     expect(
       applied[2].spec.volumeClaimTemplates[0].spec.resources.requests.storage,
     ).toBe('5Gi');

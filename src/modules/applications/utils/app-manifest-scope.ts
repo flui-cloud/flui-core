@@ -13,6 +13,7 @@ export const APP_SCOPED_KINDS: ReadonlySet<string> = new Set([
   ApplicationResourceKind.SECRET,
   ApplicationResourceKind.PERSISTENT_VOLUME_CLAIM,
   ApplicationResourceKind.HORIZONTAL_POD_AUTOSCALER,
+  ApplicationResourceKind.SCALED_OBJECT,
   ApplicationResourceKind.CERTIFICATE,
   ApplicationResourceKind.JOB,
   ApplicationResourceKind.CRON_JOB,

@@ -3,6 +3,7 @@ import { ApplicationManifestGeneratorService } from './application-manifest-gene
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { ApplicationEntity } from '../entities/application.entity';
 import { appManifestRefusal } from '../utils/app-manifest-scope';
+import { buildQueueScaledObject } from '../../messaging/keda/keda.manifest';
 
 /**
  * F-091: the generated YAML is applied with the cluster's admin credentials, so
@@ -171,5 +172,21 @@ describe('an application manifest stays inside its namespace', () => {
         'guest-1',
       ),
     ).toBeNull();
+  });
+
+  it('lets an application scale itself on its queue', () => {
+    const scaler = JSON.parse(
+      buildQueueScaledObject({
+        deployment: 'worker',
+        namespace: 'guest-1',
+        account: 'A'.padEnd(56, 'B'),
+        stream: 'ORDERS',
+        consumer: 'ORDERS',
+        lagThreshold: 5,
+        minReplicas: 0,
+        maxReplicas: 3,
+      }),
+    );
+    expect(appManifestRefusal([scaler], 'guest-1')).toBeNull();
   });
 });

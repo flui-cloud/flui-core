@@ -1,7 +1,11 @@
 jest.mock('@kubernetes/client-node', () => ({}));
 
 import { JSONCodec } from 'nats';
-import { QueueAlarmService, QUEUE_GROWING_ALERT } from './queue-alarm.service';
+import {
+  fingerprintOf,
+  QueueAlarmService,
+  QUEUE_GROWING_ALERT,
+} from './queue-alarm.service';
 
 const OPERATOR = {
   clusterId: 'c1',
@@ -124,7 +128,7 @@ describe('the alarm on a queue that keeps growing', () => {
     await round(ctx, 450);
     expect(ctx.recorded).toHaveLength(1);
     expect(ctx.recorded[0]).toMatchObject({
-      fingerprint: 'queue:AAPP:jobs',
+      fingerprint: fingerprintOf({ account: 'AAPP', queue: 'jobs' }),
       status: 'firing',
       alertname: QUEUE_GROWING_ALERT,
       fluiKind: 'queue',
@@ -138,6 +142,16 @@ describe('the alarm on a queue that keeps growing', () => {
     );
   });
 
+  it('names a queue in a fingerprint the alert table can hold', () => {
+    const account = 'A'.padEnd(56, 'B');
+    const one = fingerprintOf({ account, queue: 'ORDERS_WITH_A_LONG_NAME' });
+    expect(one.length).toBeLessThanOrEqual(64);
+    expect(one).toBe(
+      fingerprintOf({ account, queue: 'ORDERS_WITH_A_LONG_NAME' }),
+    );
+    expect(one).not.toBe(fingerprintOf({ account, queue: 'OTHER' }));
+  });
+
   it('stays open while the backlog holds and resolves once it drains', async () => {
     const ctx = build();
     for (const n of [150, 300, 450]) await round(ctx, n);
@@ -146,7 +160,7 @@ describe('the alarm on a queue that keeps growing', () => {
     expect(ctx.routing.deliver).toHaveBeenCalledTimes(1);
     await round(ctx, 200);
     expect(ctx.recorded.at(-1)).toMatchObject({
-      fingerprint: 'queue:AAPP:jobs',
+      fingerprint: fingerprintOf({ account: 'AAPP', queue: 'jobs' }),
       status: 'resolved',
     });
     expect(ctx.routing.deliver).toHaveBeenLastCalledWith(
