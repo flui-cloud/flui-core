@@ -13,9 +13,8 @@ describe('ReplicatedVolumes1790000000046', () => {
     expect(sql.every((q) => q.includes('ADD VALUE IF NOT EXISTS'))).toBe(true);
   });
 
-  it('runs last', () => {
-    expect(migrations[migrations.length - 1]).toBe(
-      ReplicatedVolumes1790000000046,
-    );
+  it('runs right after the database HA migration', () => {
+    const at = migrations.indexOf(ReplicatedVolumes1790000000046);
+    expect(migrations[at - 1].name).toBe('DatabaseHa1790000000045');
   });
 });

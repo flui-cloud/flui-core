@@ -12,6 +12,9 @@ import { InstancesModule } from './modules/instances/instances.moduel';
 import { ManagementModule } from './modules/management/management.module';
 import { InferenceModule } from './modules/inference/inference.module';
 import { MailModule } from './modules/mail/mail.module';
+import { AppIdentityModule } from './modules/app-identity/app-identity.module';
+import { MessagingModule } from './modules/messaging/messaging.module';
+import { DbImportModule } from './modules/db-import/db-import.module';
 import { AssistantModule } from './modules/assistant/assistant.module';
 import { McpModule } from './modules/mcp/mcp.module';
 import { InfrastructureModule } from './modules/infrastructure/infrastructure.module';
@@ -140,6 +143,9 @@ import { QueueIntakeModule } from './common/queues/queue-intake.module';
     ManagementModule,
     InferenceModule,
     MailModule,
+    AppIdentityModule,
+    MessagingModule,
+    DbImportModule,
     IdentityConsoleModule,
     AssistantModule,
     McpModule,

@@ -100,6 +100,12 @@ import { InferenceUsageIpHash1790000000043 } from './1790000000043-InferenceUsag
 import { InferenceUsageCachedTokens1790000000044 } from './1790000000044-InferenceUsageCachedTokens';
 import { DatabaseHa1790000000045 } from './1790000000045-DatabaseHa';
 import { ReplicatedVolumes1790000000046 } from './1790000000046-ReplicatedVolumes';
+import { IdentityEmailSends1790000000047 } from './1790000000047-IdentityEmailSends';
+import { AppIdentityLinks1790000000048 } from './1790000000048-AppIdentityLinks';
+import { CatalogInstallIdentity1790000000049 } from './1790000000049-CatalogInstallIdentity';
+import { ClusterNats1790000000050 } from './1790000000050-ClusterNats';
+import { AppPorts1790000000051 } from './1790000000051-AppPorts';
+import { DbImports1790000000052 } from './1790000000052-DbImports';
 import { BackfillArtifactApplicationId1787500000000 } from './1787500000000-BackfillArtifactApplicationId';
 import { WireGuardHubKeySealed1790000000000 } from './1790000000000-WireGuardHubKeySealed';
 import { RecoverNodeAccessOperation1790000000001 } from './1790000000001-RecoverNodeAccessOperation';
@@ -213,4 +219,10 @@ export const migrations = [
   InferenceUsageCachedTokens1790000000044,
   DatabaseHa1790000000045,
   ReplicatedVolumes1790000000046,
+  IdentityEmailSends1790000000047,
+  AppIdentityLinks1790000000048,
+  CatalogInstallIdentity1790000000049,
+  ClusterNats1790000000050,
+  AppPorts1790000000051,
+  DbImports1790000000052,
 ];

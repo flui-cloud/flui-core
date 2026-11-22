@@ -340,4 +340,32 @@ export const MIGRATION_TOOLS: ToolDef[] = [
       );
     },
   }),
+  defineTool({
+    name: 'db_import_get',
+    routes: ['GET /applications/:id/import'],
+    description:
+      'The latest import of an external database into this Flui PostgreSQL or MariaDB, same engine to same engine (id is the Flui database application). status: checking, copying, streaming (every table copied, new changes follow; the switch is possible), cutting-over, completed, failed, aborted. How far behind it is: lagBytes for PostgreSQL, lagSeconds for MariaDB. detail says what went wrong or what to do. An import is started by the person, from the dashboard or with `flui db import`, because it needs the source password: never ask for that password in the conversation.',
+    scope: MCP_SCOPE.MIGRATION_READ,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) => ctx.api.get(`/applications/${enc(args.id)}/import`),
+  }),
+  defineTool({
+    name: 'db_import_switch',
+    routes: ['POST /applications/:id/import/cutover'],
+    description:
+      'Finish an import in the streaming state: Flui waits until no change is left to apply, then detaches from the source (for PostgreSQL it also sets every sequence to the value on the source and removes what it added there). Only after the person has stopped every write to the source; Flui cannot stop them. If changes keep arriving, the import goes back to streaming and says so.',
+    scope: MCP_SCOPE.MIGRATION_WRITE,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(`/applications/${enc(args.id)}/import/cutover`, {}),
+  }),
+  defineTool({
+    name: 'db_import_cancel',
+    routes: ['DELETE /applications/:id/import'],
+    description:
+      'Cancel a running import: stop following the source and remove what the import added there. What was already copied stays in the Flui database.',
+    scope: MCP_SCOPE.MIGRATION_WRITE,
+    inputSchema: { id: z.string() },
+    run: (args, ctx) => ctx.api.delete(`/applications/${enc(args.id)}/import`),
+  }),
 ];

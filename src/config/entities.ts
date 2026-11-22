@@ -79,6 +79,11 @@ import { MailEventEntity } from '../modules/mail/entities/mail-event.entity';
 import { MailConnectionEntity } from '../modules/mail/entities/mail-connection.entity';
 import { IdentityEmailProviderEntity } from '../modules/mail/entities/identity-email-provider.entity';
 import { IdentityEmailDeliveryEntity } from '../modules/mail/entities/identity-email-delivery.entity';
+import { IdentityEmailSendEntity } from '../modules/mail/entities/identity-email-send.entity';
+import { AppIdentityLinkEntity } from '../modules/app-identity/entities/app-identity-link.entity';
+import { ClusterNatsEntity } from '../modules/messaging/entities/cluster-nats.entity';
+import { NatsAccountEntity } from '../modules/messaging/entities/nats-account.entity';
+import { DbImportEntity } from '../modules/db-import/entities/db-import.entity';
 import { IdentityConsoleStateEntity } from '../modules/identity-console/entities/identity-console-state.entity';
 import { ActionProposalEntity } from '../modules/action-cycle/entities/action-proposal.entity';
 import { AgentConcessionEntity } from '../modules/action-cycle/entities/agent-concession.entity';
@@ -173,6 +178,11 @@ export const entities = [
   MailConnectionEntity,
   IdentityEmailProviderEntity,
   IdentityEmailDeliveryEntity,
+  IdentityEmailSendEntity,
+  AppIdentityLinkEntity,
+  ClusterNatsEntity,
+  DbImportEntity,
+  NatsAccountEntity,
   IdentityConsoleStateEntity,
   SandboxTenantEntity,
   SandboxWaitlistEntity,

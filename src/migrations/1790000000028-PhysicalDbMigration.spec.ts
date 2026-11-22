@@ -63,6 +63,12 @@ describe('PhysicalDbMigration1790000000028', () => {
       'InferenceUsageCachedTokens1790000000044',
       'DatabaseHa1790000000045',
       'ReplicatedVolumes1790000000046',
+      'IdentityEmailSends1790000000047',
+      'AppIdentityLinks1790000000048',
+      'CatalogInstallIdentity1790000000049',
+      'ClusterNats1790000000050',
+      'AppPorts1790000000051',
+      'DbImports1790000000052',
     ]);
     expect(migrations[at - 1].name).toMatch(/179000000002[67]$/);
   });
