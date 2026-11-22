@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.16.0-rc.1",
+      "publishedAt": "2026-11-22T06:48:28.762Z",
+      "bootstrapRef": "6545479",
+      "images": {
+        "fluiApi": "0.16.0-rc.1",
+        "fluiWeb": "0.16.0-rc.1",
+        "fluiAuthz": "0.8.0"
+      },
+      "notes": [
+        "Applications can sign their own users in with an identity server installed from the catalog, share work through queues that scale their workers down to zero, publish UDP ports the cluster firewall opens, and import an existing PostgreSQL or MariaDB with a guided switch. The catalog adds Matrix, Jitsi Meet, Airflow, Debezium and Activepieces, and Nextcloud edits documents with ONLYOFFICE."
+      ],
+      "migrations": 6,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.15.0",
       "publishedAt": "2026-11-19T21:32:09.606Z",
       "bootstrapRef": "6545479",
