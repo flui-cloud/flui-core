@@ -72,6 +72,13 @@ export class CatalogInstallEntity {
   @Column({ length: 20, nullable: true })
   authMode?: string;
 
+  /**
+   * With `authMode: oidc`, the customer identity install the app signs its
+   * users in with. Absent: Flui sign-in, for the team.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  identityInstallId?: string | null;
+
   @Column({ type: 'json', default: '{}' })
   options: Record<string, boolean>;
 

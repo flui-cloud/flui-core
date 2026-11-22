@@ -209,6 +209,24 @@ spec:
         # the whole login flow.
         - name: ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED
           value: 'false'
+        # How Flui manages this identity server for the apps connected to it: a
+        # system API user whose certificate is all the server holds; Flui signs
+        # with the key. IAM_OWNER covers projects, clients and users, nothing
+        # outside this instance.
+        - name: FLUI_SYSTEM_KEY
+          valueFrom:
+            generate: rsa-private-key
+            bits: 2048
+          description: Key Flui signs with to manage this identity server. Generated once at install.
+        - name: FLUI_SYSTEM_CERT
+          valueFrom:
+            certificateFor: FLUI_SYSTEM_KEY
+            commonName: flui
+            encoding: base64
+          description: Certificate of the key above, which the identity server trusts.
+        - name: ZITADEL_SYSTEMAPIUSERS
+          value: '{"flui":{"KeyData":"{{env.FLUI_SYSTEM_CERT}}","Memberships":[{"MemberType":"System","Roles":["IAM_OWNER"]}]}}'
+          secret: true
       resources:
         requests:
           cpu: 100m

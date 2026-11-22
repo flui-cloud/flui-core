@@ -1,3 +1,4 @@
+import { IdentityPoolResolver } from '../app-identity/services/identity-pool.resolver';
 import { ProjectsModule } from '../projects/projects.module';
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -60,6 +61,7 @@ import { BackupArtifactEntity } from '../backups/entities/backup-artifact.entity
   ],
   controllers: [CatalogController, AppRemovalController, DbPoolerController],
   providers: [
+    IdentityPoolResolver,
     CatalogAppDefinitionRepository,
     CatalogInstallRepository,
     CatalogService,

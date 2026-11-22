@@ -77,6 +77,23 @@ describe('key material in a catalog install', () => {
     expect(cert.subject).toBe('CN=harbor-ab12');
   });
 
+  it('writes the certificate as base64 of its PEM when asked, for a value inside JSON', () => {
+    const env = processor().resolveEnv(
+      [
+        { name: 'KEY', valueFrom: { generate: 'rsa-private-key', bits: 2048 } },
+        {
+          name: 'CERT',
+          valueFrom: { certificateFor: 'KEY', encoding: 'base64' },
+        },
+      ],
+      install,
+    );
+    const value = env.find((e) => e.name === 'CERT')!.value;
+    expect(value).toMatch(/^[A-Za-z0-9+/=]+$/);
+    const cert = new X509Certificate(Buffer.from(value, 'base64').toString());
+    expect(cert.subject).toBe('CN=harbor-ab12');
+  });
+
   it('gives each install its own key', () => {
     const spec: CatalogEnvVar[] = [
       { name: 'KEY', valueFrom: { generate: 'rsa-private-key', bits: 2048 } },

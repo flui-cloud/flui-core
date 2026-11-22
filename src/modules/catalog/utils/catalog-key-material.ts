@@ -105,7 +105,11 @@ function certificateProblems(
     'certificateFor',
     'commonName',
     'validDays',
+    'encoding',
   ]);
+  if (vf.encoding !== undefined && !['pem', 'base64'].includes(vf.encoding)) {
+    problems.push('encoding must be pem or base64');
+  }
   if (!keys.has(vf.certificateFor)) {
     problems.push(
       `certificateFor "${vf.certificateFor}" is not a generated rsa-private-key of the same component`,

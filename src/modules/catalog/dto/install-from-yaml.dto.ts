@@ -145,6 +145,14 @@ export class InstallFromYamlDto {
   authMode?: 'native' | 'oidc' | 'proxy' | 'none';
 
   @ApiPropertyOptional({
+    description:
+      'With authMode oidc: the identity install (from GET /identity/installs) the app signs its users in with. Omitted: Flui sign-in, for your team.',
+  })
+  @IsOptional()
+  @IsUUID()
+  identityInstallId?: string;
+
+  @ApiPropertyOptional({
     type: 'object',
     additionalProperties: { type: 'boolean' },
     description:
