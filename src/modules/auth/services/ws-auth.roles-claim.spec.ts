@@ -14,6 +14,13 @@ import { IdentityRole } from '../entities/user.entity';
 const MACHINE_CLAIM = 'urn:zitadel:iam:org:project:386547186109775904:roles';
 const HUMAN_CLAIM = 'urn:zitadel:iam:org:project:roles';
 
+beforeAll(() => {
+  process.env.OIDC_AUDIENCE = 'flui-web';
+});
+afterAll(() => {
+  delete process.env.OIDC_AUDIENCE;
+});
+
 function serviceFor(payload: Record<string, unknown>, isAdmin = false) {
   const config = {
     get: (key: string) =>
@@ -25,7 +32,7 @@ function serviceFor(payload: Record<string, unknown>, isAdmin = false) {
   };
   const jwt = {
     decode: () => ({ header: { kid: 'kid-1' } }),
-    verifyAsync: async () => payload,
+    verifyAsync: async () => ({ aud: ['flui-web'], ...payload }),
   };
   const users = {
     findOne: async () => ({

@@ -17,6 +17,7 @@ import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { FLUI_SESSION_COOKIE } from '../utils/cookie-extractor.util';
 import { projectRolesOf } from '../utils/credential-ceiling.util';
+import { carriesFluiAudience } from '../utils/oidc-audience.util';
 
 const ROLE_PRECEDENCE: IdentityRole[] = [
   IdentityRole.ADMIN,
@@ -30,7 +31,6 @@ export class WsAuthService implements OnModuleInit {
 
   private jwksClient: JwksClient | null = null;
   private issuer: string | undefined;
-  private audience: string | undefined;
 
   constructor(
     private readonly configService: ConfigService,
@@ -46,10 +46,6 @@ export class WsAuthService implements OnModuleInit {
       this.configService.get<string>('ZITADEL_ISSUER') ||
       '';
     this.issuer = rawIssuer && rawIssuer !== 'https://' ? rawIssuer : undefined;
-    this.audience =
-      this.configService.get<string>('OIDC_AUDIENCE') ||
-      this.configService.get<string>('ZITADEL_AUDIENCE') ||
-      undefined;
 
     const internalJwksUri =
       this.configService.get<string>('OIDC_JWKS_URI') ||
@@ -185,8 +181,10 @@ export class WsAuthService implements OnModuleInit {
         secret: publicKey,
         algorithms: ['RS256'],
         issuer: this.issuer,
-        audience: this.audience,
       });
+      if (!carriesFluiAudience(payload.aud)) {
+        throw new Error('Token not issued for Flui');
+      }
     } catch (err) {
       this.logger.debug(
         `OIDC verify failed: ${err instanceof Error ? err.message : String(err)}`,

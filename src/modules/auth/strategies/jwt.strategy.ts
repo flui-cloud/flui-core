@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { noteSeen, refuseIfBlocked } from '../utils/user-presence.util';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
@@ -11,6 +17,7 @@ import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { AuthenticatedUser } from '../interfaces/authenticated-user.interface';
 import { IdentityRole, UserEntity } from '../entities/user.entity';
 import { extractJwtFromFluiSessionCookie } from '../utils/cookie-extractor.util';
+import { carriesFluiAudience } from '../utils/oidc-audience.util';
 import { OidcProfileSyncService } from '../services/oidc-profile-sync.service';
 import { projectRolesOf } from '../utils/credential-ceiling.util';
 import {
@@ -51,10 +58,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       '';
     const issuer =
       rawIssuer && rawIssuer !== 'https://' ? rawIssuer : undefined;
-    const audience =
-      configService.get<string>('OIDC_AUDIENCE') ||
-      configService.get<string>('ZITADEL_AUDIENCE');
-
     const internalJwksUri =
       configService.get<string>('OIDC_JWKS_URI') ||
       configService.get<string>('ZITADEL_JWKS_URI');
@@ -90,13 +93,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ExtractJwt.fromAuthHeaderAsBearerToken(),
         extractJwtFromFluiSessionCookie,
       ]),
-      audience,
       issuer,
       algorithms: ['RS256'],
     });
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
+    if (!carriesFluiAudience(payload.aud)) {
+      throw new UnauthorizedException('This token was not issued for Flui');
+    }
     // Both claim shapes, because a machine identity's token uses the other one
     // and reading only the human's would drop its ceiling on the floor.
     const roles = projectRolesOf(payload);

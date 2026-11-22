@@ -14,7 +14,11 @@ describe('a blocked account on a websocket', () => {
     };
     const jwt = {
       decode: () => ({ header: { kid: 'kid-1' } }),
-      verifyAsync: async () => ({ sub: 'user-1', email: 'a@example.com' }),
+      verifyAsync: async () => ({
+        sub: 'user-1',
+        email: 'a@example.com',
+        aud: ['flui-web'],
+      }),
     };
     const users = {
       findOne: async () => ({
@@ -40,8 +44,12 @@ describe('a blocked account on a websocket', () => {
     handshake: { auth: { token: 'h.b.s' }, headers: {}, query: {} },
   } as never;
   const mode = process.env.AUTH_MODE;
+  beforeEach(() => {
+    process.env.OIDC_AUDIENCE = 'flui-web';
+  });
   afterEach(() => {
     process.env.AUTH_MODE = mode;
+    delete process.env.OIDC_AUDIENCE;
   });
 
   it.each(['oidc', 'local'])(
