@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.16.0-rc.2",
+      "publishedAt": "2026-11-22T09:00:14.929Z",
+      "bootstrapRef": "6545479",
+      "images": {
+        "fluiApi": "0.16.0-rc.2",
+        "fluiWeb": "0.16.0-rc.2",
+        "fluiAuthz": "0.8.0"
+      },
+      "notes": [
+        "Fixes background job queues: their server now starts on every cluster, workers scale with the work waiting for them, and a queue that keeps growing raises its alert. Also fixes installing an application that brings its own building blocks on a single-node cluster."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.16.0-rc.1",
       "publishedAt": "2026-11-22T06:48:28.762Z",
       "bootstrapRef": "6545479",

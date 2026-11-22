@@ -34,17 +34,17 @@ export interface ReleaseManifest {
 }
 
 export const RELEASE: ReleaseManifest = {
-  version: '0.16.0-rc.1',
+  version: '0.16.0-rc.2',
   // A commit ref, not a tag. Unchanged since 0.15.0-rc.1: the scripts that let
   // a server bought with its cluster wait to be told where to join, and label
   // nodes with their zone.
   bootstrapRef: '6545479',
   images: {
     // Release tags: the tag build is what makes an image exist under the
-    // release's own name. Both repositories are tagged `v0.16.0-rc.1`, so a
+    // release's own name. Both repositories are tagged `v0.16.0-rc.2`, so a
     // rollout never waits on a pull that cannot succeed.
-    fluiApi: '0.16.0-rc.1',
-    fluiWeb: '0.16.0-rc.1',
+    fluiApi: '0.16.0-rc.2',
+    fluiWeb: '0.16.0-rc.2',
     // Pinned by its own version, not the platform's: 0.8.x is the sign-in
     // relay that asks the API and serves the trial notice page, which this
     // API's gateway and sandbox installs expect.
