@@ -1,22 +1,29 @@
-import { droppedAutoscaler } from './dropped-autoscaler.util';
+import { droppedAutoscalers } from './dropped-autoscaler.util';
 
-describe('droppedAutoscaler', () => {
+describe('droppedAutoscalers', () => {
   const app = { slug: 'web', k8sNamespace: 'ns' };
 
-  it('names the autoscaler to remove once the deploy stops rendering one', () => {
-    expect(droppedAutoscaler(app, [{ kind: 'Deployment' }])).toEqual({
-      kind: 'HorizontalPodAutoscaler',
-      name: 'web-hpa',
-      namespace: 'ns',
-    });
+  it('names every autoscaler to remove once the deploy renders none', () => {
+    expect(droppedAutoscalers(app, [{ kind: 'Deployment' }])).toEqual([
+      { kind: 'HorizontalPodAutoscaler', name: 'web-hpa', namespace: 'ns' },
+      { kind: 'ScaledObject', name: 'web-queue', namespace: 'ns' },
+    ]);
   });
 
-  it('keeps it while the deploy still renders it', () => {
+  it('keeps the one the deploy still renders and removes the other kind', () => {
     expect(
-      droppedAutoscaler(app, [
+      droppedAutoscalers(app, [
         { kind: 'Deployment' },
         { kind: 'HorizontalPodAutoscaler' },
       ]),
-    ).toBeNull();
+    ).toEqual([{ kind: 'ScaledObject', name: 'web-queue', namespace: 'ns' }]);
+    expect(
+      droppedAutoscalers(app, [
+        { kind: 'Deployment' },
+        { kind: 'ScaledObject' },
+      ]),
+    ).toEqual([
+      { kind: 'HorizontalPodAutoscaler', name: 'web-hpa', namespace: 'ns' },
+    ]);
   });
 });

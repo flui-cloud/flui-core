@@ -154,6 +154,7 @@
     "mongodb": "^7.3.0",
     "mysql2": "^3.22.5",
     "nats": "^2.29.3",
+    "nkeys.js": "1.1.0",
     "nodemailer": "^9.0.5",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

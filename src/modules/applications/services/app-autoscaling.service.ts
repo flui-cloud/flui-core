@@ -1,3 +1,4 @@
+import { droppedAutoscalers } from '../utils/dropped-autoscaler.util';
 import {
   BadRequestException,
   ConflictException,
@@ -184,24 +185,23 @@ export class AppAutoscalingService {
       this.logger.log(
         `[${app.id}] replica autoscaler applied (${wanted.name})`,
       );
-      return;
     }
-    const name = `${app.slug}-hpa`;
-    if (
-      await this.kubernetes.getResource(
-        kubeconfig,
-        HPA_KIND,
-        name,
-        app.k8sNamespace,
-      )
-    ) {
-      await this.kubernetes.deleteResource(
-        kubeconfig,
-        HPA_KIND,
-        name,
-        app.k8sNamespace,
-      );
-      this.logger.log(`[${app.id}] replica autoscaler removed (${name})`);
+    for (const stale of droppedAutoscalers(app, wanted ? [wanted] : [])) {
+      if (
+        await this.kubernetes
+          .getResource(kubeconfig, stale.kind, stale.name, stale.namespace)
+          .catch(() => null)
+      ) {
+        await this.kubernetes.deleteResource(
+          kubeconfig,
+          stale.kind,
+          stale.name,
+          stale.namespace,
+        );
+        this.logger.log(
+          `[${app.id}] replica autoscaler removed (${stale.name})`,
+        );
+      }
     }
   }
 

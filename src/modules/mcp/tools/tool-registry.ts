@@ -13,6 +13,8 @@ import { BACKUP_TOOLS } from './backup.tools';
 import { MIGRATION_TOOLS } from './migration.tools';
 import { CRON_TOOLS } from './cron.tools';
 import { GATEWAY_TOOLS } from './gateway.tools';
+import { IDENTITY_TOOLS } from './identity.tools';
+import { MESSAGING_TOOLS } from './messaging.tools';
 import { DB_SESSIONS_TOOLS } from './db-sessions.tools';
 import { MAIL_TOOLS } from './mail.tools';
 import { VARIABLE_TOOLS } from './variables.tools';
@@ -54,6 +56,8 @@ export const ALL_TOOLS: ToolDef[] = [
   ...MIGRATION_TOOLS,
   ...CRON_TOOLS,
   ...GATEWAY_TOOLS,
+  ...IDENTITY_TOOLS,
+  ...MESSAGING_TOOLS,
   ...MAIL_TOOLS,
   ...VARIABLE_TOOLS,
   ...CREDENTIAL_HANDOVER_TOOLS,

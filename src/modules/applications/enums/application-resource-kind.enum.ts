@@ -9,6 +9,7 @@ export enum ApplicationResourceKind {
   SECRET = 'Secret',
   PERSISTENT_VOLUME_CLAIM = 'PersistentVolumeClaim',
   HORIZONTAL_POD_AUTOSCALER = 'HorizontalPodAutoscaler',
+  SCALED_OBJECT = 'ScaledObject',
   CERTIFICATE = 'Certificate',
   CLUSTER_ISSUER = 'ClusterIssuer',
   JOB = 'Job',

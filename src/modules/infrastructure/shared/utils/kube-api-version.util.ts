@@ -16,6 +16,8 @@ const API_VERSION_BY_KIND: Record<string, string> = {
   Job: 'batch/v1',
   CronJob: 'batch/v1',
   HorizontalPodAutoscaler: 'autoscaling/v2',
+  ScaledObject: 'keda.sh/v1alpha1',
+  HelmChart: 'helm.cattle.io/v1',
   Ingress: 'networking.k8s.io/v1',
   NetworkPolicy: 'networking.k8s.io/v1',
   IngressRoute: 'traefik.io/v1alpha1',

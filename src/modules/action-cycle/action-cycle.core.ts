@@ -67,6 +67,7 @@ export const PROPOSAL_TTL_MS = 60 * 60 * 1000;
 export const ALWAYS_ASK_ACTIONS: ReadonlySet<string> = new Set([
   'DELETE /applications/:id/install',
   'DELETE /applications/:id/schedules/:name',
+  'DELETE /applications/:id/messaging/queues/:name',
   'DELETE /applications/:id/gateway/routes/:endpointId',
   'POST /infrastructure/clusters/:id/nodes/:nodeId/recover-access',
   'DELETE /infrastructure/clusters/:id/workers/:nodeId',

@@ -63,7 +63,7 @@ import {
   ATTACHED_SERVICES_PORT,
   AttachedServicesPort,
 } from '../interfaces/attached-services.port';
-import { droppedAutoscaler } from '../utils/dropped-autoscaler.util';
+import { droppedAutoscalers } from '../utils/dropped-autoscaler.util';
 import { ScheduledJobsService } from '../services/scheduled-jobs.service';
 import { applyAppManifest } from '../utils/app-manifest-scope';
 import { poolerManifestsToApply } from '../utils/db-pooler.core';
@@ -539,23 +539,7 @@ export class ApplicationDeployProcessor {
         kubeconfig,
       );
       await this.applyPooler(appForManifests, kubeconfig);
-      const dropped = droppedAutoscaler(app, manifests);
-      if (
-        dropped &&
-        (await this.kubernetesService.getResource(
-          kubeconfig,
-          dropped.kind,
-          dropped.name,
-          dropped.namespace,
-        ))
-      ) {
-        await this.kubernetesService.deleteResource(
-          kubeconfig,
-          dropped.kind,
-          dropped.name,
-          dropped.namespace,
-        );
-      }
+      await this.removeDroppedAutoscalers(app, manifests, kubeconfig);
 
       // Open the deployment guard BEFORE waiting for readiness, so pod-level
       // crashes that happen during the wait (OOMKilled, CrashLoop, missing
@@ -741,6 +725,25 @@ export class ApplicationDeployProcessor {
         attempt: job.attemptsMade,
         timestamp: new Date(),
       });
+    }
+  }
+
+  private async removeDroppedAutoscalers(
+    app: ApplicationEntity,
+    manifests: GeneratedManifest[],
+    kubeconfig: string,
+  ): Promise<void> {
+    for (const dropped of droppedAutoscalers(app, manifests)) {
+      const live = await this.kubernetesService
+        .getResource(kubeconfig, dropped.kind, dropped.name, dropped.namespace)
+        .catch(() => null);
+      if (!live) continue;
+      await this.kubernetesService.deleteResource(
+        kubeconfig,
+        dropped.kind,
+        dropped.name,
+        dropped.namespace,
+      );
     }
   }
 

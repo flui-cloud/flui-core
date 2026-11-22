@@ -134,6 +134,19 @@ export interface ApplicationScaling {
   targetMemory?: number;
   horizontal?: ApplicationHorizontalScaling;
   vertical?: ApplicationVerticalScaling;
+  /** Scale on a NATS queue instead of CPU and memory, down to no replica while it is empty. */
+  queue?: ApplicationQueueScaling;
+}
+
+export interface ApplicationQueueScaling {
+  /** Public key of the application's NATS account. */
+  account: string;
+  stream: string;
+  consumer: string;
+  /** Messages waiting per replica before another one is added. */
+  lagThreshold: number;
+  min: number;
+  max: number;
 }
 
 export interface ApplicationHorizontalScaling {
