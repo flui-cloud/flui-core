@@ -25,3 +25,36 @@ export function parseInstallOptions(
   }
   return out;
 }
+
+export interface DependencyChoiceInput {
+  alias: string;
+  mode: 'DEDICATED' | 'REUSE_EXISTING';
+  existingApplicationId?: string;
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `alias=new` installs a dedicated block, `alias=<application id>` reuses one. */
+export function parseDependencyChoices(
+  pairs: string[] | undefined,
+): DependencyChoiceInput[] | undefined {
+  if (!pairs?.length) return undefined;
+  return pairs.map((pair) => {
+    const eq = pair.indexOf('=');
+    const alias = eq < 1 ? '' : pair.slice(0, eq).trim();
+    const target = eq < 1 ? '' : pair.slice(eq + 1).trim();
+    if (!alias || !target) {
+      throw new Error(
+        `Expected --dependency alias=new|<application id>, got "${pair}"`,
+      );
+    }
+    if (target.toLowerCase() === 'new') return { alias, mode: 'DEDICATED' };
+    if (!UUID_RE.test(target)) {
+      throw new Error(
+        `--dependency ${alias}: "${target}" is neither "new" nor an application id`,
+      );
+    }
+    return { alias, mode: 'REUSE_EXISTING', existingApplicationId: target };
+  });
+}

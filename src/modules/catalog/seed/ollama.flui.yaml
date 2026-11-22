@@ -1,0 +1,135 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: ollama
+  name: Ollama
+  description: >
+    Runs open language models on your own nodes and serves them over an
+    OpenAI-compatible API, so applications built for hosted models can use
+    a private one instead. Without GPU nodes it runs on CPU, which suits
+    small models (around one to four billion parameters) for summaries,
+    classification and short answers. Reachable only from inside the
+    cluster: Ollama has no sign-in of its own, so it is never given a
+    public address. The models named at install are downloaded on first
+    start and kept on the volume.
+  appKind: APPLICATION
+  category: ai
+  tags:
+    - ai
+    - llm
+    - inference
+    - openai-compatible
+    - building-block
+  license: MIT
+  version: '0.40'
+  maintainedAt: '2026-11-21'
+  draft: true
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/ollama.svg
+  links:
+    website: https://ollama.com
+    docs: https://docs.ollama.com
+    source: https://github.com/ollama/ollama
+
+spec:
+  type: building-block
+
+  image:
+    registry: docker.io
+    repository: ollama/ollama
+    tag: '0.40.17'
+
+  # The server must be up before a model can be pulled through it, and the
+  # pull must not hold the server back: a model that cannot be fetched is
+  # reported in the log and the server keeps serving the ones it has.
+  command:
+    - /bin/sh
+    - /etc/ollama/start.sh
+
+  configFiles:
+    - path: /etc/ollama/start.sh
+      content: |
+        set -e
+        ollama serve &
+        server=$!
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        for model in $OLLAMA_MODELS_TO_PULL; do
+          ollama pull "$model" || echo "could not pull $model"
+        done
+        wait "$server"
+
+  ports:
+    - name: http
+      internal: 11434
+      expose: false
+      protocol: http
+
+  volumes:
+    - name: models
+      mountPath: /root/.ollama
+      required: true
+      size: 20Gi
+
+  persistence:
+    scope: dedicated
+
+  env:
+    - name: OLLAMA_HOST
+      value: 0.0.0.0:11434
+    - name: OLLAMA_MODELS_TO_PULL
+      valueFrom:
+        userInput:
+          label: Models to download
+          default: qwen3:0.6b
+          format: text
+          minLength: 1
+          maxLength: 256
+          pattern: '^[a-z0-9._:/-]+( [a-z0-9._:/-]+)*$'
+          patternDescription: Model names from ollama.com/library separated by spaces, for example qwen3:0.6b gemma3:1b
+      description: Downloaded on first start. More can be pulled later through the API.
+    # One model loaded and one request at a time: on CPU a second one in
+    # parallel halves the speed of both and doubles the memory.
+    - name: OLLAMA_MAX_LOADED_MODELS
+      value: '1'
+    - name: OLLAMA_NUM_PARALLEL
+      value: '1'
+    - name: OLLAMA_KEEP_ALIVE
+      value: 30m
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: '4'
+      memory: 6Gi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 500m
+          max: '8'
+        memory:
+          min: 1Gi
+          max: 16Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+        cooldown: 10m
+
+  healthcheck:
+    type: http
+    path: /
+    port: 11434
+    initialDelay: 10s
+    interval: 15s
+    timeout: 5s
+    retries: 6
+
+  auth:
+    mode: none

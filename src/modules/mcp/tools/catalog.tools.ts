@@ -165,6 +165,18 @@ export const CATALOG_TOOLS: ToolDef[] = [
     },
   }),
   defineTool({
+    name: 'catalog_udp_ports',
+    routes: ['POST /catalog/:slug/udp-ports'],
+    description:
+      'Before installing a catalog app that publishes UDP ports (video calls, for example): whether the chosen cluster firewall opens each one, and which app already holds it. A held port refuses the install. A closed one does not, but the app will not be reachable on it until someone who manages the cluster adds an inbound UDP rule in Cluster Firewalls; say so before installing.',
+    scope: MCP_SCOPE.APP_READ,
+    inputSchema: { slug: z.string(), clusterId: z.string() },
+    run: (args, ctx) =>
+      ctx.api.post(`/catalog/${enc(args.slug)}/udp-ports`, {
+        clusterId: args.clusterId,
+      }),
+  }),
+  defineTool({
     name: 'app_install',
     routes: ['POST /catalog/:slug/install'],
     description:
@@ -182,6 +194,12 @@ export const CATALOG_TOOLS: ToolDef[] = [
         ),
       domain: z.string().optional(),
       authMode: z.enum(['native', 'oidc', 'proxy', 'none']).optional(),
+      identityInstallId: z
+        .string()
+        .optional()
+        .describe(
+          'With authMode oidc: the identity install (from identity_installs_list) the app signs its users in with. Omitted: Flui sign-in, which is for the people who operate Flui — not for the app’s own users.',
+        ),
       exposure: z.enum(['public', 'internal']).optional(),
       options: z
         .record(z.string(), z.boolean())
@@ -191,6 +209,18 @@ export const CATALOG_TOOLS: ToolDef[] = [
         ),
       userInputs: z.record(z.string(), z.string()).optional(),
       envOverrides: z.record(z.string(), z.string()).optional(),
+      dependencyChoices: z
+        .array(
+          z.object({
+            alias: z.string(),
+            mode: z.enum(['DEDICATED', 'REUSE_EXISTING']),
+            existingApplicationId: z.string().optional(),
+          }),
+        )
+        .optional()
+        .describe(
+          'One per dependency catalog_get_app lists for the app (by its `as` alias): DEDICATED installs a new block for it, REUSE_EXISTING with existingApplicationId reuses one already running. Debezium needs `kafka`.',
+        ),
     },
     run: async (args, ctx) => {
       const dto: InstallCatalogAppDto = {
@@ -199,10 +229,14 @@ export const CATALOG_TOOLS: ToolDef[] = [
         displayName: args.displayName,
         domain: args.domain,
         authMode: args.authMode,
+        identityInstallId: args.identityInstallId,
         exposure: args.exposure,
         options: args.options,
         userInputs: args.userInputs,
         envOverrides: args.envOverrides,
+        dependencyChoices: args.dependencyChoices as
+          | InstallCatalogAppDto['dependencyChoices']
+          | undefined,
       };
       // `assertCanCreate` runs on the route, and for a sandbox guest it also
       // pins the install to the cluster its tenancy was built on — neither of

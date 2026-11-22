@@ -1,0 +1,378 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: matrix
+  name: Matrix (Synapse + Element)
+  description: >
+    Team chat on your own server: rooms, direct messages, threads, file
+    sharing and end-to-end encryption, used from Element in the browser or
+    any Matrix app on desktop and mobile. A self-hosted alternative to Slack
+    and Microsoft Teams. Ships as the Synapse homeserver, the Element web
+    client and their own PostgreSQL, installed and torn down together.
+    Private by default: nobody can sign up on their own and the server does
+    not talk to other Matrix servers, so the administrator chosen at install
+    creates every account. The address chosen at install becomes part of
+    every user ID and cannot be changed afterwards.
+  appKind: APPLICATION
+  category: productivity
+  tags:
+    - chat
+    - matrix
+    - messaging
+    - e2ee
+    - collaboration
+    - composed
+  license: AGPL-3.0
+  version: '1.165'
+  maintainedAt: '2026-11-21'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/element.svg
+  links:
+    website: https://element.io
+    docs: https://element-hq.github.io/synapse/latest/
+    source: https://github.com/element-hq/synapse
+  ratings:
+    wow: 4
+    utility: 5
+    euFit: 5
+    community: 5
+  alternativeTo:
+    - Slack
+    - Microsoft Teams
+    - Discord
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: matrix.internal
+
+  components:
+    - name: db
+      engine: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '17-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: synapse
+        - name: POSTGRES_USER
+          value: synapse
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        # Synapse refuses a database whose collation is not C.
+        - name: POSTGRES_INITDB_ARGS
+          value: --encoding=UTF-8 --lc-collate=C --lc-ctype=C
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - synapse
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: synapse
+      dependsOn:
+        - db
+      image:
+        registry: docker.io
+        repository: matrixdotorg/synapse
+        tag: v1.165.0
+      # Config files carry addresses only, so the secrets are written from the
+      # environment into a second config file Synapse merges at start. The
+      # signing key is generated once on the volume.
+      command:
+        - /bin/sh
+        - /etc/synapse/start.sh
+      ports:
+        - name: http
+          internal: 8008
+          expose: false
+          protocol: http
+      volumes:
+        - name: data
+          mountPath: /data
+          required: true
+          size: 10Gi
+      configFiles:
+        - path: /etc/synapse/homeserver.yaml
+          content: |
+            server_name: "{{components.web.fqdn}}"
+            public_baseurl: "https://{{components.web.fqdn}}/"
+            pid_file: /data/homeserver.pid
+            listeners:
+              - port: 8008
+                type: http
+                tls: false
+                x_forwarded: true
+                bind_addresses: ["0.0.0.0"]
+                resources:
+                  - names: [client]
+                    compress: false
+            media_store_path: /data/media_store
+            signing_key_path: /data/signing.key
+            report_stats: false
+            enable_registration: false
+            allow_guest_access: false
+            federation_domain_whitelist: []
+            trusted_key_servers: []
+            suppress_key_server_warning: true
+            allow_public_rooms_over_federation: false
+            max_upload_size: 50M
+        - path: /etc/synapse/start.sh
+          content: |
+            set -e
+            umask 077
+            mkdir -p /run/flui
+            cat > /run/flui/secrets.yaml <<YAML
+            database:
+              name: psycopg2
+              args:
+                host: "$SYNAPSE_DB_HOST"
+                port: 5432
+                user: synapse
+                password: "$SYNAPSE_DB_PASSWORD"
+                database: synapse
+                cp_min: 2
+                cp_max: 10
+            registration_shared_secret: "$SYNAPSE_REGISTRATION_SECRET"
+            macaroon_secret_key: "$SYNAPSE_MACAROON_SECRET"
+            form_secret: "$SYNAPSE_FORM_SECRET"
+            YAML
+            chown -R 991:991 /run/flui
+            chown 991:991 /data
+            set -- -c /etc/synapse/homeserver.yaml -c /run/flui/secrets.yaml
+            gosu 991:991 python -m synapse.app.homeserver "$@" --generate-keys
+            exec /start.py run "$@"
+      env:
+        - name: SYNAPSE_DB_HOST
+          value: '{{components.db.host}}'
+        - name: SYNAPSE_DB_PASSWORD
+          value: '{{components.db.env.POSTGRES_PASSWORD}}'
+          secret: true
+        - name: SYNAPSE_REGISTRATION_SECRET
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Lets the administrator create accounts from inside the server. Never exposed outside it.
+        - name: SYNAPSE_MACAROON_SECRET
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Signs short-lived login tokens. Changing it signs everybody out.
+        - name: SYNAPSE_FORM_SECRET
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: MATRIX_ADMIN_USER
+          valueFrom:
+            userInput:
+              label: Admin username
+              default: admin
+              format: text
+              minLength: 2
+              maxLength: 32
+              pattern: '^[a-z0-9._=-]+$'
+              patternDescription: Lowercase letters, digits and . _ = -
+          description: The first account, which creates the others. It signs in as @username:your-address.
+        - name: MATRIX_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Admin password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 12
+              maxLength: 128
+          description: Password of the first account. Flui does not store or log it outside this install.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 384Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '4'
+            memory:
+              min: 384Mi
+              max: 4Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 10m
+      healthcheck:
+        type: http
+        path: /health
+        port: 8008
+        initialDelay: 30s
+        interval: 15s
+        timeout: 5s
+        retries: 20
+
+    - name: web
+      dependsOn:
+        - synapse
+      image:
+        registry: docker.io
+        repository: vectorim/element-web
+        tag: v1.12.35
+      ports:
+        - name: http
+          internal: 8080
+          expose: true
+          protocol: http
+      env:
+        - name: ELEMENT_WEB_PORT
+          value: '8080'
+      # One address for the client and the server: Element's own web server
+      # forwards the Matrix API to Synapse, which stays private.
+      configFiles:
+        - path: /etc/nginx/templates/default.conf.template
+          content: |
+            server {
+                listen 8080;
+                listen [::]:8080;
+                server_name _;
+                root /usr/share/nginx/html;
+                index index.html;
+                client_max_body_size 50m;
+
+                location ~ ^/(_matrix|_synapse/client) {
+                    proxy_pass http://{{components.synapse.host}}:8008;
+                    proxy_set_header X-Forwarded-For $remote_addr;
+                    proxy_set_header X-Forwarded-Proto https;
+                    proxy_set_header Host $host;
+                    proxy_http_version 1.1;
+                    proxy_read_timeout 600s;
+                }
+                location = /index.html { add_header Cache-Control "no-cache"; }
+                location = /version { add_header Cache-Control "no-cache"; }
+                location /i18n/ { add_header Cache-Control "no-cache"; }
+                location /config {
+                    root /tmp/element-web-config;
+                    add_header Cache-Control "no-cache";
+                }
+                error_page 500 502 503 504 /50x.html;
+            }
+        - path: /app/config.json
+          content: |
+            {
+              "default_server_config": {
+                "m.homeserver": {
+                  "base_url": "https://{{components.web.fqdn}}",
+                  "server_name": "{{components.web.fqdn}}"
+                }
+              },
+              "disable_custom_urls": true,
+              "disable_guests": true,
+              "disable_3pid_login": true,
+              "default_federate": false,
+              "brand": "Element",
+              "room_directory": { "servers": ["{{components.web.fqdn}}"] },
+              "setting_defaults": {
+                "UIFeature.registration": false,
+                "UIFeature.thirdPartyId": false
+              }
+            }
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: false
+      healthcheck:
+        type: http
+        path: /
+        port: 8080
+        initialDelay: 5s
+        interval: 15s
+        timeout: 5s
+        retries: 6
+
+  auth:
+    mode: native
+
+  postInstall:
+    - name: create-admin
+      description: Creates the administrator account chosen at install; a no-op when it already exists.
+      exec:
+        component: synapse
+        command:
+          - /bin/sh
+          - -c
+          - register_new_matrix_user -k "$SYNAPSE_REGISTRATION_SECRET" -u "$MATRIX_ADMIN_USER" -p "$MATRIX_ADMIN_PASSWORD" -a http://localhost:8008 || true
+
+  smokeTest:
+    type: http
+    path: /_matrix/client/versions
+    expectedStatus: 200
+    timeoutSeconds: 180

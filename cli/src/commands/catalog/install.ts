@@ -1,11 +1,23 @@
 import { Args, Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import { CatalogClient, CatalogInstall } from '../../lib/catalog-client';
+import {
+  CatalogClient,
+  CatalogInstall,
+  InstallCatalogAppInput,
+} from '../../lib/catalog-client';
 import { ProjectClient } from '../../lib/project-client';
 import { resolveClusterRef } from '../../lib/resolve-cluster';
 import { printContextBanner } from '../../lib/context-banner';
+import {
+  udpPortLine,
+  udpPortsHint,
+  type UdpPortsView,
+} from '../../lib/udp-ports';
 import { promptInput, promptMaskedInput } from '../../lib/prompts';
-import { parseInstallOptions } from '../../lib/install-options';
+import {
+  parseDependencyChoices,
+  parseInstallOptions,
+} from '../../lib/install-options';
 
 function colorStatus(status: string): string {
   switch (status) {
@@ -42,6 +54,7 @@ export default class CatalogInstallCmd extends Command {
     '<%= config.bin %> <%= command.id %> penpot --input ADMIN_EMAIL=me@example.com --wait',
     '<%= config.bin %> <%= command.id %> postgresql --option pooler=false',
     '<%= config.bin %> <%= command.id %> postgresql --option poolerSessionMode=true',
+    '<%= config.bin %> <%= command.id %> debezium --dependency kafka=new',
   ];
   static readonly args = {
     slug: Args.string({
@@ -73,9 +86,23 @@ export default class CatalogInstallCmd extends Command {
       description:
         'Turn a feature the app declares on or off, as key=true|false (repeatable). PostgreSQL: pooler (default true), poolerSessionMode (default false)',
     }),
+    dependency: Flags.string({
+      multiple: true,
+      description:
+        'For a block that needs another one, as alias=new (install a dedicated one) or alias=<application id> (reuse one already running). Debezium: kafka',
+    }),
     'skip-endpoint': Flags.boolean({
       default: false,
       description: 'Install without DNS and TLS; configure them later',
+    }),
+    auth: Flags.string({
+      options: ['native', 'oidc', 'proxy', 'none'],
+      description:
+        'How people sign in, among the modes the app offers (default: the app’s own default)',
+    }),
+    identity: Flags.string({
+      description:
+        'With --auth oidc: the identity install (`flui identity installs`) the app signs its users in with. Omitted: Flui sign-in, for your team',
     }),
     'allow-master-placement': Flags.boolean({
       default: false,
@@ -115,6 +142,9 @@ export default class CatalogInstallCmd extends Command {
       displayName: flags.name ?? args.slug,
       domain: flags.domain,
       skipEndpoint: flags['skip-endpoint'],
+      authMode: flags.auth as InstallCatalogAppInput['authMode'],
+      identityInstallId: flags.identity,
+      dependencyChoices: parseDependencyChoices(flags.dependency),
       allowMasterPlacement: flags['allow-master-placement'],
       userInputs: Object.keys(userInputs).length ? userInputs : undefined,
       envOverrides: parsePairs(flags.env),
@@ -124,9 +154,16 @@ export default class CatalogInstallCmd extends Command {
     if (flags.wait) {
       install = await this.pollUntilSettled(catalog, install, flags.timeout);
     }
+    const udpPorts = await catalog
+      .udpPorts(args.slug, cluster.id)
+      .then((view) => ({
+        ...view,
+        ports: view.ports.map(({ takenBy: _ownPort, ...p }) => p),
+      }))
+      .catch(() => null);
 
     if (flags.json) {
-      this.log(JSON.stringify({ cluster, install }, null, 2));
+      this.log(JSON.stringify({ cluster, install, udpPorts }, null, 2));
       return;
     }
 
@@ -139,6 +176,7 @@ export default class CatalogInstallCmd extends Command {
     if (install.errorMessage) {
       this.log(`   ${chalk.red('why')}      ${install.errorMessage}`);
     }
+    this.printUdpPorts(udpPorts);
     this.log(
       flags.wait
         ? ''
@@ -152,6 +190,15 @@ export default class CatalogInstallCmd extends Command {
    * The inputs the app needs and the command did not carry, asked for here,
    * so the person learns which ones they are before the install is refused.
    */
+  private printUdpPorts(view: UdpPortsView | null): void {
+    for (const p of view?.ports ?? []) {
+      const line = udpPortLine(p);
+      this.log(`   udp      ${p.state === 'open' ? line : chalk.yellow(line)}`);
+    }
+    const hint = view?.ports.length ? udpPortsHint(view) : null;
+    if (hint) this.log(chalk.dim(`   ${hint}`));
+  }
+
   private async askMissingInputs(
     catalog: CatalogClient,
     slug: string,

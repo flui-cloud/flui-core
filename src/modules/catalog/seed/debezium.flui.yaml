@@ -1,0 +1,120 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: debezium
+  name: Debezium (change data capture)
+  description: >
+    Streams every insert, update and delete from a database into Kafka as
+    it happens, so other services can react to changes, keep a search index
+    or a cache in sync, or copy data elsewhere without querying the
+    database. Runs Kafka Connect with the Debezium connectors for
+    PostgreSQL, MySQL, MariaDB, MongoDB and SQL Server, and stores its own
+    state in the Kafka it is installed with. Flui PostgreSQL is already set
+    up for logical replication. Connectors are created through the Kafka
+    Connect API, reachable only from inside the cluster; database passwords
+    are read from the install's secret variables as ${env:NAME}, so they are
+    never written into Kafka.
+  appKind: APPLICATION
+  category: database-tools
+  tags:
+    - cdc
+    - change-data-capture
+    - kafka-connect
+    - replication
+    - building-block
+  license: Apache-2.0
+  version: '3.7'
+  maintainedAt: '2026-11-21'
+  icon: https://raw.githubusercontent.com/debezium/debezium.github.io/develop/assets/images/color_black_debezium_type_600px.svg
+  links:
+    website: https://debezium.io
+    docs: https://debezium.io/documentation/reference/stable/
+    source: https://github.com/debezium/debezium
+
+spec:
+  type: building-block
+
+  image:
+    registry: quay.io
+    repository: debezium/connect
+    tag: 3.7.1.Final
+
+  dependencies:
+    - ref: kafka
+      as: kafka
+      required: true
+      reuseExisting: true
+
+  ports:
+    - name: http
+      internal: 8083
+      expose: false
+      protocol: http
+
+  # Named after this install, so two installs sharing one Kafka stay two
+  # separate Connect clusters instead of merging into one.
+  env:
+    - name: BOOTSTRAP_SERVERS
+      value: '{{deps.kafka.host}}:{{deps.kafka.port}}'
+    - name: GROUP_ID
+      value: '{{app.slug}}'
+    - name: CONFIG_STORAGE_TOPIC
+      value: '{{app.slug}}-configs'
+    - name: OFFSET_STORAGE_TOPIC
+      value: '{{app.slug}}-offsets'
+    - name: STATUS_STORAGE_TOPIC
+      value: '{{app.slug}}-statuses'
+    - name: CONFIG_STORAGE_REPLICATION_FACTOR
+      value: '1'
+    - name: OFFSET_STORAGE_REPLICATION_FACTOR
+      value: '1'
+    - name: STATUS_STORAGE_REPLICATION_FACTOR
+      value: '1'
+    # `${env:NAME}` in a connector's configuration reads this container's
+    # environment when the connector starts, so a password stays a secret of
+    # the install instead of a value stored in the configs topic.
+    - name: CONNECT_CONFIG_PROVIDERS
+      value: env
+    - name: CONNECT_CONFIG_PROVIDERS_ENV_CLASS
+      value: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+    - name: HEAP_OPTS
+      value: -Xms256M -Xmx1G
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 768Mi
+    limits:
+      cpu: '2'
+      memory: 1536Mi
+
+  scaling:
+    horizontal:
+      enabled: false
+    vertical:
+      enabled: true
+      mode: Recreate
+      bounds:
+        cpu:
+          min: 200m
+          max: '4'
+        memory:
+          min: 768Mi
+          max: 3Gi
+      updatePolicy:
+        trigger:
+          - OOMKilled
+        cooldown: 10m
+
+  healthcheck:
+    type: http
+    path: /
+    port: 8083
+    initialDelay: 30s
+    interval: 15s
+    timeout: 5s
+    retries: 10
+
+  auth:
+    mode: none

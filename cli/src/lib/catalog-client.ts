@@ -1,5 +1,7 @@
 import { ApiClient } from './api-client';
 import { ConfigStorage } from './config-storage';
+import { DependencyChoiceInput } from './install-options';
+import type { UdpPortsView } from './udp-ports';
 
 export interface CatalogApp {
   id: string;
@@ -51,6 +53,9 @@ export interface InstallCatalogAppInput {
   userInputs?: Record<string, string>;
   envOverrides?: Record<string, string>;
   options?: Record<string, boolean>;
+  authMode?: 'native' | 'oidc' | 'proxy' | 'none';
+  identityInstallId?: string;
+  dependencyChoices?: DependencyChoiceInput[];
 }
 
 /**
@@ -104,6 +109,13 @@ export class CatalogClient {
       userInputPrompts?: CatalogInputPrompt[];
     }>(`/catalog/${encodeURIComponent(slug)}`);
     return detail.userInputPrompts ?? [];
+  }
+
+  async udpPorts(slug: string, clusterId: string): Promise<UdpPortsView> {
+    return this.api.post<UdpPortsView>(
+      `/catalog/${encodeURIComponent(slug)}/udp-ports`,
+      { clusterId },
+    );
   }
 
   async getInstall(id: string): Promise<CatalogInstall> {
