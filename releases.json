@@ -11,7 +11,7 @@
         "fluiAuthz": "0.8.0"
       },
       "notes": [
-        "Applications can sign their own users in with an identity server installed from the catalog, share work through queues that scale their workers down to zero, publish UDP ports the cluster firewall opens, and import an existing PostgreSQL or MariaDB with a guided switch. The catalog adds Matrix, Jitsi Meet, Airflow, Debezium and Activepieces, and Nextcloud edits documents with ONLYOFFICE."
+        "Applications can now sign in their own users, run background jobs that switch off when there is nothing to do, host voice and video calls, and bring in an existing database while it keeps running. The catalog now focuses on tools for teams and businesses — sign-in, chat, video meetings, automation, data pipelines, dashboards and AI — and leaves personal and home-server apps behind."
       ],
       "migrations": 6,
       "requiresBootstrap": false,
