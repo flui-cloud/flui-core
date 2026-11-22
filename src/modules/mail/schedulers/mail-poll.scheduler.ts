@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { MailPollService } from '../services/mail-poll.service';
 import { MailEventStoreService } from '../services/mail-event-store.service';
+import { IdentityEmailDedupeService } from '../services/identity-email-dedupe.service';
+import { IdentityEmailLimitService } from '../services/identity-email-limit.service';
 
 /**
  * Keeps delivery outcomes current, and keeps them no longer than agreed.
@@ -20,6 +22,8 @@ export class MailPollScheduler {
   constructor(
     private readonly poller: MailPollService,
     private readonly store: MailEventStoreService,
+    private readonly identityDedupe: IdentityEmailDedupeService,
+    private readonly identityLimits: IdentityEmailLimitService,
   ) {}
 
   @Cron(process.env.MAIL_POLL_CRON || CronExpression.EVERY_5_MINUTES)
@@ -42,6 +46,8 @@ export class MailPollScheduler {
   async purge(): Promise<void> {
     try {
       await this.store.purge();
+      await this.identityDedupe.purge();
+      await this.identityLimits.purge();
     } catch (error) {
       this.logger.error(
         `[mail] retention sweep failed: ${(error as { message?: string })?.message ?? error}`,

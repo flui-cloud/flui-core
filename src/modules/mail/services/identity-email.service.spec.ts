@@ -43,6 +43,7 @@ function build(
     sender?: Record<string, unknown>;
     send?: jest.Mock;
     claim?: string;
+    limited?: 'recipient' | 'hourly' | null;
   } = {},
 ) {
   const setup = {
@@ -71,12 +72,17 @@ function build(
     sent: jest.fn().mockResolvedValue(undefined),
     release: jest.fn().mockResolvedValue(undefined),
   };
+  const limits = {
+    reached: jest.fn().mockResolvedValue(options.limited ?? null),
+    record: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new IdentityEmailService(
     setup as never,
     { send } as never,
     dedupe as never,
+    limits as never,
   );
-  return { service, setup, send, dedupe };
+  return { service, setup, send, dedupe, limits };
 }
 
 describe('receiving sign-in mail from the identity provider', () => {
@@ -229,6 +235,30 @@ describe('receiving sign-in mail from the identity provider', () => {
     expect(dedupe.release).toHaveBeenCalledWith(dedupe.claim.mock.calls[0][0]);
     expect(dedupe.sent).not.toHaveBeenCalled();
   });
+
+  it('counts every message sent against its recipient, by a keyed hash', async () => {
+    const { service, limits } = build();
+    await service.receive(signed(), RAW, BODY, NOW);
+    const [hash] = limits.record.mock.calls[0];
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).not.toContain('visitor');
+    expect(limits.reached.mock.calls[0][0]).toBe(hash);
+  });
+
+  it.each(['recipient', 'hourly'] as const)(
+    'answers 2xx unsent, claims nothing and records no failure over the %s ceiling',
+    async (limited) => {
+      const { service, send, dedupe, setup, limits } = build({ limited });
+      await expect(service.receive(signed(), RAW, BODY, NOW)).resolves.toEqual({
+        sent: false,
+        limited,
+      });
+      expect(send).not.toHaveBeenCalled();
+      expect(dedupe.claim).not.toHaveBeenCalled();
+      expect(setup.recordFailure).not.toHaveBeenCalled();
+      expect(limits.record).not.toHaveBeenCalled();
+    },
+  );
 
   it('claims nothing for a message it refuses', async () => {
     const { service, dedupe } = build();

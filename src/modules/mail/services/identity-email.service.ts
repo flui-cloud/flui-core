@@ -19,18 +19,25 @@ import {
 } from '../utils/identity-email-message.util';
 import { verifyIdentitySignature } from '../utils/identity-email-signature.util';
 import { describeError } from '../utils/mail-error.util';
+import {
+  IdentityEmailLimit,
+  IdentityEmailLimitService,
+  identityRecipientHash,
+} from './identity-email-limit.service';
 
 export const IDENTITY_MAIL_CATEGORY = 'identity';
 
 export type IdentityEmailReceipt =
   | { sent: true; provider: string; messageId: string | null }
-  | { sent: false; duplicate: true };
+  | { sent: false; duplicate: true }
+  | { sent: false; limited: IdentityEmailLimit };
 
 /**
  * One message from the identity provider, verified and sent through the
  * transactional sender. Anything short of a send answers non-2xx, so the
- * identity provider records the failure and retries. Bodies carry sign-in
- * codes, so nothing from the message is logged.
+ * identity provider records the failure and retries — except a message over
+ * a ceiling, which answers 2xx unsent: a retry would only be refused again.
+ * Bodies carry sign-in codes, so nothing from the message is logged.
  */
 @Injectable()
 export class IdentityEmailService {
@@ -40,7 +47,24 @@ export class IdentityEmailService {
     private readonly setup: IdentityEmailSetupService,
     private readonly sender: MailSendService,
     private readonly dedupe: IdentityEmailDedupeService,
+    private readonly limits: IdentityEmailLimitService,
   ) {}
+
+  private async overCeiling(
+    recipient: string,
+    eventType: string | undefined,
+    now: number,
+  ): Promise<IdentityEmailLimit | null> {
+    const limited = await this.limits.reached(recipient, new Date(now));
+    if (limited) {
+      const who =
+        limited === 'recipient' ? 'this address' : 'the identity provider';
+      this.logger.warn(
+        `[mail] identity email ${eventType ?? 'message'} not sent: ${who} reached its ceiling`,
+      );
+    }
+    return limited;
+  }
 
   async receive(
     signature: string | undefined,
@@ -82,6 +106,10 @@ export class IdentityEmailService {
       );
     }
 
+    const recipient = identityRecipientHash(message.to, key);
+    const limited = await this.overCeiling(recipient, message.eventType, now);
+    if (limited) return { sent: false, limited };
+
     const hash = identityBodyHash(raw, key);
     const claim = await this.dedupe.claim(hash, new Date(now));
     if (claim === 'duplicate') {
@@ -111,6 +139,7 @@ export class IdentityEmailService {
         { category: IDENTITY_MAIL_CATEGORY },
       );
       await this.dedupe.sent(hash);
+      await this.limits.record(recipient, new Date(now));
       await this.setup.recordDelivery();
       this.logger.log(
         `[mail] identity email ${message.eventType ?? 'message'} handed to ${result.provider}`,

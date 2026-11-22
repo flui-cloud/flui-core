@@ -30,7 +30,9 @@ import { DnsZoneEntity } from '../dns/entities/dns-zone.entity';
 import { ProvidersModule } from '../providers/providers.module';
 import { IdentityEmailProviderEntity } from './entities/identity-email-provider.entity';
 import { IdentityEmailDeliveryEntity } from './entities/identity-email-delivery.entity';
+import { IdentityEmailSendEntity } from './entities/identity-email-send.entity';
 import { IdentityEmailDedupeService } from './services/identity-email-dedupe.service';
+import { IdentityEmailLimitService } from './services/identity-email-limit.service';
 import { IdentityEmailController } from './controllers/identity-email.controller';
 import { IdentityEmailService } from './services/identity-email.service';
 import { IdentityEmailSetupService } from './services/identity-email-setup.service';
@@ -54,6 +56,7 @@ import { IdentityProviderEmailClient } from './services/identity-provider-email.
       DnsZoneEntity,
       IdentityEmailProviderEntity,
       IdentityEmailDeliveryEntity,
+      IdentityEmailSendEntity,
     ]),
     HttpModule.register({ timeout: 10000 }),
     AccessModule,
@@ -88,6 +91,7 @@ import { IdentityProviderEmailClient } from './services/identity-provider-email.
     IdentityEmailSetupService,
     IdentityEmailService,
     IdentityEmailDedupeService,
+    IdentityEmailLimitService,
   ],
   exports: [
     MailCredentialsService,
