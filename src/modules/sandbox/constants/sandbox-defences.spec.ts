@@ -2,7 +2,8 @@ import * as yaml from 'js-yaml';
 import { buildSandboxNetworkPolicy } from './sandbox-network-policy.manifest';
 import { buildNoindexMiddleware } from './sandbox-noindex';
 import { buildPrepullManifest } from './sandbox-prepull.manifest';
-import { isFastCatalogApp } from './sandbox-seed';
+import { SANDBOX_FAST_CATALOG, isFastCatalogApp } from './sandbox-seed';
+import { DEFAULT_TRIAL_EXCLUDED_CATALOG } from './sandbox-catalog';
 
 describe('network policy around a tenancy', () => {
   const policy = () =>
@@ -138,8 +139,15 @@ describe('image pre-pull', () => {
 
 describe('the guided path', () => {
   it('keeps the heavy catalog applications out of it', () => {
-    expect(isFastCatalogApp('gitea')).toBe(true);
-    expect(isFastCatalogApp('memos')).toBe(false);
+    expect(isFastCatalogApp('umami')).toBe(true);
     expect(isFastCatalogApp('nextcloud')).toBe(false);
+  });
+
+  it('never offers what the trial excludes', () => {
+    expect(
+      SANDBOX_FAST_CATALOG.filter((slug) =>
+        DEFAULT_TRIAL_EXCLUDED_CATALOG.includes(slug),
+      ),
+    ).toEqual([]);
   });
 });

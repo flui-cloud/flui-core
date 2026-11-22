@@ -1332,6 +1332,9 @@ const MASK_EXEMPT: string[] = [
   'ConfigureSystemIngressDto.apiDomain', // modules/dns/dto/configure-system-ingress.dto.ts
   'ConfigureSystemIngressDto.appDomain', // modules/dns/dto/configure-system-ingress.dto.ts
   'ConfigureSystemIngressDto.issuer', // modules/dns/dto/configure-system-ingress.dto.ts
+  'ConnectAppIdentityDto.envNames', // modules/app-identity/dto/app-identity.dto.ts
+  'ConnectAppIdentityDto.identityInstallId', // modules/app-identity/dto/app-identity.dto.ts
+  'ConnectAppIdentityDto.redirectPaths', // modules/app-identity/dto/app-identity.dto.ts
   'ConnectClientDto.targetInstallId', // modules/catalog/dto/connect-client.dto.ts
   'ConnectMailProviderDto.activate', // modules/mail/dto/mail-connection.dto.ts
   'ConnectMailProviderDto.config', // modules/mail/dto/mail-connection.dto.ts
@@ -1425,6 +1428,7 @@ const MASK_EXEMPT: string[] = [
   'CreateApplicationDto.description', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.env', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.exposure', // modules/applications/dto/create-application.dto.ts
+  'CreateApplicationDto.extraPorts', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.healthProbe', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.kind', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.labels', // modules/applications/dto/create-application.dto.ts
@@ -1443,6 +1447,7 @@ const MASK_EXEMPT: string[] = [
   'CreateApplicationDto.sourceConfig', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.sourceType', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.startCommand', // modules/applications/dto/create-application.dto.ts
+  'CreateApplicationDto.udpPorts', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.volumes', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationDto.workloadKind', // modules/applications/dto/create-application.dto.ts
   'CreateApplicationResponseDto.application', // modules/applications/dto/application-response.dto.ts
@@ -1523,6 +1528,10 @@ const MASK_EXEMPT: string[] = [
   'CreateDbMigrationDto.srcAppId', // modules/db-lifecycle/dto/create-db-migration.dto.ts
   'CreateDbMigrationDto.targetClusterId', // modules/db-lifecycle/dto/create-db-migration.dto.ts
   'CreateDbMigrationDto.verifyRowCounts', // modules/db-lifecycle/dto/create-db-migration.dto.ts
+  'CreateQueueDto.deadLetter', // modules/messaging/dto/app-messaging.dto.ts
+  'CreateQueueDto.maxAgeHours', // modules/messaging/dto/app-messaging.dto.ts
+  'CreateQueueDto.maxDeliver', // modules/messaging/dto/app-messaging.dto.ts
+  'CreateQueueDto.name', // modules/messaging/dto/app-messaging.dto.ts
   'CreatedIdentityUserDto.email', // modules/auth/dto/create-identity-user.dto.ts
   'CreatedIdentityUserDto.id', // modules/auth/dto/create-identity-user.dto.ts
   'CreatedIdentityUserDto.inviteCode', // modules/auth/dto/create-identity-user.dto.ts
@@ -2133,6 +2142,7 @@ const MASK_EXEMPT: string[] = [
   'InstallCatalogAppDto.exposure', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.force', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.hostnameMode', // modules/catalog/dto/install-catalog-app.dto.ts
+  'InstallCatalogAppDto.identityInstallId', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.options', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.projectId', // modules/catalog/dto/install-catalog-app.dto.ts
   'InstallCatalogAppDto.resourceOverrides', // modules/catalog/dto/install-catalog-app.dto.ts
@@ -2151,6 +2161,7 @@ const MASK_EXEMPT: string[] = [
   'InstallFromYamlDto.exposure', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.force', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.hostnameMode', // modules/catalog/dto/install-from-yaml.dto.ts
+  'InstallFromYamlDto.identityInstallId', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.options', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.projectId', // modules/catalog/dto/install-from-yaml.dto.ts
   'InstallFromYamlDto.resourceOverrides', // modules/catalog/dto/install-from-yaml.dto.ts
@@ -2179,6 +2190,9 @@ const MASK_EXEMPT: string[] = [
   'InventoryNodeDto.type', // modules/infrastructure/clusters/dto/cluster-inventory.dto.ts
   'InviteDeliveryDto.reason', // modules/auth/dto/invite-link.dto.ts
   'InviteDeliveryDto.sent', // modules/auth/dto/invite-link.dto.ts
+  'InviteIdentityUserDto.email', // modules/app-identity/dto/app-identity.dto.ts
+  'InviteIdentityUserDto.familyName', // modules/app-identity/dto/app-identity.dto.ts
+  'InviteIdentityUserDto.givenName', // modules/app-identity/dto/app-identity.dto.ts
   'InviteLinkRequestDto.send', // modules/auth/dto/invite-link.dto.ts
   'InviteLinkResultDto.delivery', // modules/auth/dto/invite-link.dto.ts
   'InviteLinkResultDto.inviteCode', // modules/auth/dto/invite-link.dto.ts
@@ -2785,6 +2799,11 @@ const MASK_EXEMPT: string[] = [
   'PublicRepositoryAnalyzeDto.branch', // modules/repositories/dto/public-repository-analyze.dto.ts
   'PublicRepositoryAnalyzeDto.cloneUrl', // modules/repositories/dto/public-repository-analyze.dto.ts
   'PublishShowcaseDto.note', // modules/applications/dto/publish-showcase.dto.ts
+  'QueueScalingDto.consumer', // modules/messaging/dto/app-messaging.dto.ts
+  'QueueScalingDto.lagThreshold', // modules/messaging/dto/app-messaging.dto.ts
+  'QueueScalingDto.max', // modules/messaging/dto/app-messaging.dto.ts
+  'QueueScalingDto.min', // modules/messaging/dto/app-messaging.dto.ts
+  'QueueScalingDto.stream', // modules/messaging/dto/app-messaging.dto.ts
   'QueuedBuildInfoDto.ageMinutes', // modules/app-builds/dto/build-namespace.dto.ts
   'QueuedBuildInfoDto.applicationId', // modules/app-builds/dto/build-namespace.dto.ts
   'QueuedBuildInfoDto.appSlug', // modules/app-builds/dto/build-namespace.dto.ts
@@ -3092,6 +3111,7 @@ const MASK_EXEMPT: string[] = [
   'SandboxQuotaDto.memory', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxQuotaDto.pods', // modules/sandbox/dto/sandbox-limits.dto.ts
   'SandboxQuotaDto.storage', // modules/sandbox/dto/sandbox-limits.dto.ts
+  'SandboxSessionDto.catalogExcluded', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.hasArea', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.appsKeptUntil', // modules/sandbox/dto/sandbox-session.dto.ts
   'SandboxSessionDto.expiresAt', // modules/sandbox/dto/sandbox-session.dto.ts

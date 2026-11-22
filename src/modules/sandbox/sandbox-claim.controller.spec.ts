@@ -64,6 +64,19 @@ describe('the area a guest holds', () => {
     expect((await build(null).session(req('u1'))).visitor).toBe(false);
   });
 
+  it('names the catalog entries the trial does not install', async () => {
+    const session = await build(null).session(req('u1'));
+    expect(session.catalogExcluded).toEqual(
+      expect.arrayContaining([
+        'harbor',
+        'vaultwarden',
+        'nextcloud',
+        'gitea',
+        'activepieces',
+      ]),
+    );
+  });
+
   it('answers 404 to anyone who is not a demo guest', async () => {
     await expect(
       build({ expiresAt: new Date() }).session(req('u1', false)),

@@ -63,4 +63,12 @@ export class SandboxSessionDto {
       'Where this tenancy is opened. Present on the session too, so a visitor coming back can be sent straight in instead of claiming another one.',
   })
   loginUrl: string;
+
+  @ApiProperty({
+    type: [String],
+    example: ['harbor', 'vaultwarden'],
+    description:
+      'Catalog entries a trial area may not install. The install is refused; the dashboard leaves them out.',
+  })
+  catalogExcluded: string[];
 }

@@ -125,4 +125,37 @@ describe('catalog seed files', () => {
       expect(new Set(inputs).size).toBe(inputs.length);
     },
   );
+
+  it('matrix keeps sign-up closed and never talks to other servers', () => {
+    const spec = load('matrix.flui.yaml').spec as CatalogSpecComposed;
+    const synapse = spec.components.find((c) => c.name === 'synapse')!;
+    const config = synapse.configFiles!.find((f) =>
+      f.path.endsWith('homeserver.yaml'),
+    )!.content;
+    expect(config).toContain('enable_registration: false');
+    expect(config).toContain('federation_domain_whitelist: []');
+    expect(config).toContain('trusted_key_servers: []');
+    expect(config).toMatch(/names: \[client\]/);
+    expect(config).not.toMatch(/names: \[[^\]]*federation/);
+    expect(synapse.ports.every((p) => !p.expose)).toBe(true);
+  });
+
+  it('jitsi lets only the host start a meeting and sends media over its one UDP port', () => {
+    const spec = load('jitsi.flui.yaml').spec as CatalogSpecComposed;
+    const byName = (n: string) => spec.components.find((c) => c.name === n)!;
+    const env = (n: string, key: string) =>
+      byName(n).env.find((e) => e.name === key)?.value;
+    for (const n of ['prosody', 'jicofo', 'web']) {
+      expect(env(n, 'ENABLE_AUTH')).toBe('1');
+      expect(env(n, 'AUTH_TYPE')).toBe('internal');
+    }
+    expect(byName('jvb').udpPorts).toEqual([{ name: 'media', port: 10000 }]);
+    expect(env('jvb', 'JVB_PORT')).toBe('10000');
+    expect(
+      spec.components.filter((c) => c.udpPorts?.length).map((c) => c.name),
+    ).toEqual(['jvb']);
+    expect(
+      spec.components.flatMap((c) => c.ports ?? []).filter((p) => p.expose),
+    ).toEqual([expect.objectContaining({ name: 'http', internal: 8000 })]);
+  });
 });

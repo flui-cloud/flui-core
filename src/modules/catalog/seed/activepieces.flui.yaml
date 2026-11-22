@@ -1,0 +1,290 @@
+kind: CatalogApp
+apiVersion: flui.cloud/v1beta1
+
+metadata:
+  id: activepieces
+  name: Activepieces
+  description: >
+    Automations between the services your team uses, built visually: when
+    something happens in one, do something in others, with hundreds of ready
+    connectors, webhooks, schedules, approvals and AI steps. A self-hosted
+    alternative to Zapier, Make, Azure Logic Apps and Power Automate. Runs the
+    MIT community edition, with its own PostgreSQL and Valkey, installed and
+    torn down together. The administrator chosen at install is created right
+    away; nobody else can sign up, so further people are invited by them.
+    Code steps run isolated, without files, environment or network, and HTTP
+    steps cannot reach private addresses, so a flow cannot read the cluster's
+    internal services. Connector definitions are fetched from Activepieces at
+    start.
+  appKind: APPLICATION
+  category: automation
+  tags:
+    - automation
+    - workflows
+    - integration
+    - no-code
+    - composed
+  license: MIT
+  version: '0.93'
+  maintainedAt: '2026-11-21'
+  icon: https://cdn.jsdelivr.net/gh/selfhst/icons/svg/activepieces.svg
+  links:
+    website: https://www.activepieces.com
+    docs: https://www.activepieces.com/docs
+    source: https://github.com/activepieces/activepieces
+  alternativeTo:
+    - Zapier
+    - Make
+    - Azure Logic Apps
+    - Power Automate
+
+spec:
+  type: composed
+
+  domain:
+    auto: true
+    tls: true
+    userCustomizable: true
+
+  networking:
+    internal: activepieces.internal
+
+  components:
+    - name: db
+      engine: postgres
+      image:
+        registry: docker.io
+        repository: library/postgres
+        tag: '17-alpine'
+      ports:
+        - name: postgres
+          internal: 5432
+          expose: false
+          protocol: tcp
+      volumes:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+          required: true
+          size: 5Gi
+      persistence:
+        scope: dedicated
+      env:
+        - name: POSTGRES_DB
+          value: activepieces
+        - name: POSTGRES_USER
+          value: activepieces
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: '1'
+          memory: 1Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 100m
+              max: '2'
+            memory:
+              min: 256Mi
+              max: 2Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+              - CPUThrottling
+            cooldown: 10m
+      healthcheck:
+        type: exec
+        command:
+          - pg_isready
+          - -U
+          - activepieces
+        initialDelay: 15s
+        interval: 10s
+        timeout: 5s
+        retries: 10
+
+    - name: valkey
+      engine: valkey
+      image:
+        registry: docker.io
+        repository: valkey/valkey
+        tag: '9-alpine'
+      ports:
+        - name: valkey
+          internal: 6379
+          expose: false
+          protocol: tcp
+      env: []
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 50m
+              max: '1'
+            memory:
+              min: 64Mi
+              max: 512Mi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 10m
+      healthcheck:
+        type: tcp
+        port: 6379
+        initialDelay: 5s
+        interval: 10s
+        timeout: 3s
+        retries: 6
+
+    - name: app
+      dependsOn:
+        - db
+        - valkey
+      image:
+        registry: ghcr.io
+        repository: activepieces/activepieces
+        tag: '0.93.0'
+      ports:
+        - name: http
+          internal: 80
+          expose: true
+          protocol: http
+      env:
+        - name: AP_FRONTEND_URL
+          value: 'https://{{self.fqdn}}'
+        - name: AP_POSTGRES_HOST
+          value: '{{components.db.host}}'
+        - name: AP_POSTGRES_PORT
+          value: '5432'
+        - name: AP_POSTGRES_DATABASE
+          value: activepieces
+        - name: AP_POSTGRES_USERNAME
+          value: activepieces
+        - name: AP_POSTGRES_PASSWORD
+          value: '{{components.db.env.POSTGRES_PASSWORD}}'
+          secret: true
+        - name: AP_REDIS_HOST
+          value: '{{components.valkey.host}}'
+        - name: AP_REDIS_PORT
+          value: '6379'
+        - name: AP_ENCRYPTION_KEY
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
+          description: Encrypts the connections stored in the database. Generated once at install; changing it makes them unreadable.
+        - name: AP_JWT_SECRET
+          valueFrom:
+            generate: secret
+            length: 64
+            format: hex
+        # API and worker in one container: the worker then talks to the API on
+        # loopback instead of going out through the public address.
+        - name: AP_CONTAINER_TYPE
+          value: WORKER_AND_APP
+        # Code steps in a V8 isolate, HTTP steps refused private and metadata
+        # addresses: the only combination that is safe on a shared cluster
+        # without a privileged container.
+        - name: AP_EXECUTION_MODE
+          value: SANDBOX_CODE_ONLY
+        - name: AP_NETWORK_MODE
+          value: STRICT
+        - name: AP_TELEMETRY_ENABLED
+          value: 'false'
+        - name: AP_QUEUE_UI_ENABLED
+          value: 'false'
+        - name: AP_ADMIN_EMAIL
+          valueFrom:
+            userInput:
+              label: Administrator email
+              format: email
+              minLength: 3
+              maxLength: 254
+          description: The account created at install. Nobody else can sign up; this account invites the others.
+        - name: AP_ADMIN_PASSWORD
+          valueFrom:
+            userInput:
+              label: Administrator password
+              sensitive: true
+              format: password
+              confirm: true
+              minLength: 12
+              maxLength: 128
+          description: Password of the administrator. Flui does not store or log it outside this install.
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi
+        limits:
+          cpu: '2'
+          memory: 2Gi
+      scaling:
+        horizontal:
+          enabled: false
+        vertical:
+          enabled: true
+          mode: Recreate
+          bounds:
+            cpu:
+              min: 250m
+              max: '4'
+            memory:
+              min: 768Mi
+              max: 4Gi
+          updatePolicy:
+            trigger:
+              - OOMKilled
+            cooldown: 10m
+      healthcheck:
+        type: http
+        path: /api/v1/health
+        port: 80
+        initialDelay: 60s
+        interval: 15s
+        timeout: 5s
+        retries: 12
+
+  auth:
+    mode: native
+
+  # The first sign-up becomes the administrator and closes sign-ups behind it,
+  # so it is made from inside the pod before anyone can reach the address.
+  postInstall:
+    - name: create-admin
+      description: Creates the administrator chosen at install; a no-op once an account exists.
+      exec:
+        component: app
+        command:
+          - node
+          - -e
+          - "fetch('http://127.0.0.1/api/v1/authentication/sign-up',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:process.env.AP_ADMIN_EMAIL,password:process.env.AP_ADMIN_PASSWORD,firstName:'Admin',lastName:'Flui',trackEvents:false,newsLetter:false})}).then(r=>console.log('sign-up',r.status)).catch(e=>console.log('sign-up',e.message))"
+
+  smokeTest:
+    type: http
+    path: /api/v1/health
+    expectedStatus: 200
+    timeoutSeconds: 300

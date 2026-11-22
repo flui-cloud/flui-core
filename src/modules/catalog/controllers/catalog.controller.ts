@@ -9,6 +9,7 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  BadRequestException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -29,6 +30,8 @@ import { IAM_PERMISSION } from '../../iam/constants/iam-permissions';
 import { ApplicationAccessService } from '../../applications/services/application-access.service';
 import { ApplicationsRepository } from '../../applications/repositories/applications.repository';
 import { stripSandboxInstallPlacement } from '../../applications/utils/sandbox-placement.util';
+import { assertInstallableInTrial } from '../../sandbox/constants/sandbox-catalog';
+import { IdentityPoolResolver } from '../../app-identity/services/identity-pool.resolver';
 import { CatalogService } from '../services/catalog.service';
 import { CatalogInstallerService } from '../services/catalog-installer.service';
 import { CatalogDependencyResolverService } from '../services/catalog-dependency-resolver.service';
@@ -54,6 +57,10 @@ import { ConnectClientDto } from '../dto/connect-client.dto';
 import { CatalogInstallEntity } from '../entities/catalog-install.entity';
 import { ApplicationEntity } from '../../applications/entities/application.entity';
 import { DependencyChoiceDto as DependencyChoice } from '../dto/dependency-choice.dto';
+import { AppUdpPortsService } from '../../applications/services/app-udp-ports.service';
+import { CatalogUdpPortsPreviewDto } from '../../applications/dto/app-udp-ports.dto';
+import { CatalogUdpPortsRequestDto } from '../dto/catalog-udp-ports-request.dto';
+import { udpPortsOfSpec } from '../utils/catalog-ports.util';
 
 @ApiTags('Catalog')
 @Controller('catalog')
@@ -66,6 +73,8 @@ export class CatalogController {
     private readonly schemaValidator: CatalogSchemaValidatorService,
     private readonly applicationAccess: ApplicationAccessService,
     private readonly applications: ApplicationsRepository,
+    private readonly identityPools?: IdentityPoolResolver,
+    private readonly udpPorts?: AppUdpPortsService,
   ) {}
 
   @Public()
@@ -235,6 +244,38 @@ export class CatalogController {
   }
 
   @ApiBearerAuth()
+  @Post(':slug/udp-ports')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Preview the public UDP ports a catalog install needs on a cluster',
+    description:
+      'For each UDP port the app publishes: whether the cluster firewall opens it, and which app on the cluster already holds it. An install never opens a port; it is opened from Cluster Firewalls by someone who manages the cluster. A port held by another app refuses the install with 409 UDP_PORT_IN_USE.',
+  })
+  @ApiParam({ name: 'slug' })
+  @ApiResponse({ status: 200, type: CatalogUdpPortsPreviewDto })
+  async udpPortsPreview(
+    @Param('slug') slug: string,
+    @Body() dto: CatalogUdpPortsRequestDto,
+    @Req() req: Request,
+  ): Promise<CatalogUdpPortsPreviewDto> {
+    const user = req.user as AuthenticatedUser | undefined;
+    if (!user) throw new ForbiddenException('Unauthenticated');
+    const access = await this.applicationAccess.assertCanCreate(user, {
+      clusterId: dto.clusterId,
+    });
+    const definition = await this.catalogService.findPublishedBySlug(
+      slug,
+      user.userId,
+    );
+    return this.udpPorts!.preview(
+      dto.clusterId,
+      udpPortsOfSpec(definition.manifest.spec),
+      access.isSandbox,
+    );
+  }
+
+  @ApiBearerAuth()
   @Get('clusters/:clusterId/capabilities')
   @ApiOperation({
     summary:
@@ -293,6 +334,7 @@ export class CatalogController {
       resourceOverrides: dto.resourceOverrides,
       exposure: dto.exposure,
       authMode: dto.authMode,
+      identityInstallId: dto.identityInstallId,
       options: dto.options,
       force: dto.force,
       allowMasterPlacement: dto.allowMasterPlacement,
@@ -302,6 +344,7 @@ export class CatalogController {
       stripSandboxInstallPlacement(installDto);
     }
     await this.assertMayReuse(user, installDto.dependencyChoices);
+    await this.assertMayUseIdentity(user, installDto);
     const { install } = await this.installer.install(
       definition.slug,
       installDto,
@@ -335,9 +378,11 @@ export class CatalogController {
       projectId: dto.projectId,
     });
     if (access.isSandbox) {
+      assertInstallableInTrial(slug);
       stripSandboxInstallPlacement(dto);
     }
     await this.assertMayReuse(user, dto.dependencyChoices);
+    await this.assertMayUseIdentity(user, dto);
     // The requirements↔cluster gate (incl. internal-hosting) now lives in
     // installer.install(), so every caller (HTTP, install-from-yaml, MCP) shares it.
     const { install } = await this.installer.install(
@@ -556,6 +601,26 @@ export class CatalogController {
   }
 
   /** Reusing an existing building block wires its credentials into a new app: it takes the right to change it. */
+  /** Signing an app's users in with an identity install makes a client there, so it asks write on it. */
+  private async assertMayUseIdentity(
+    user: AuthenticatedUser | undefined,
+    dto: Pick<InstallCatalogAppDto, 'authMode' | 'identityInstallId'>,
+  ): Promise<void> {
+    if (!dto.identityInstallId) return;
+    if (dto.authMode && dto.authMode !== 'oidc') {
+      throw new BadRequestException(
+        'An identity install signs users in only with authMode oidc.',
+      );
+    }
+    if (!user || !this.identityPools)
+      throw new ForbiddenException('Unauthenticated');
+    await this.applicationAccess.assertCan(
+      user,
+      'app:write',
+      await this.identityPools.server(dto.identityInstallId),
+    );
+  }
+
   private async assertMayReuse(
     user: AuthenticatedUser | undefined,
     choices: DependencyChoice[] | undefined,

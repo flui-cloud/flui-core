@@ -88,6 +88,43 @@ describe('catalog reuse and install reads respect ownership', () => {
     expect(access.assertCanCreate).not.toHaveBeenCalled();
   });
 
+  it('refuses an entry the trial excludes when the target is a trial area', async () => {
+    installer.install.mockClear();
+    await expect(
+      controller.install('harbor', { clusterId: 'c1' } as never, req),
+    ).rejects.toMatchObject({
+      response: { code: 'SANDBOX_CATALOG_EXCLUDED' },
+    });
+    expect(installer.install).not.toHaveBeenCalled();
+  });
+
+  const reachesInstaller = (slug: string) =>
+    controller
+      .install(slug, { clusterId: 'c1' } as never, req)
+      .then(
+        () => true,
+        (err: unknown) => !(err instanceof ForbiddenException),
+      )
+      .then((passed) => passed && installer.install.mock.calls.length > 0);
+
+  it('installs the same entry anywhere else', async () => {
+    installer.install.mockClear();
+    access.assertCanCreate.mockResolvedValueOnce({ isSandbox: false });
+    await expect(reachesInstaller('harbor')).resolves.toBe(true);
+  });
+
+  it('takes the excluded list from the environment, the same for everyone', async () => {
+    process.env.SANDBOX_CATALOG_EXCLUDED = 'umami';
+    try {
+      installer.install.mockClear();
+      await expect(reachesInstaller('harbor')).resolves.toBe(true);
+      installer.install.mockClear();
+      await expect(reachesInstaller('umami')).resolves.toBe(false);
+    } finally {
+      delete process.env.SANDBOX_CATALOG_EXCLUDED;
+    }
+  });
+
   it('does not show another person’s install', async () => {
     await expect(controller.getInstall('i-other', req)).rejects.toBeInstanceOf(
       NotFoundException,

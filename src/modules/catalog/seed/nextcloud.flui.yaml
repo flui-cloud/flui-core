@@ -182,6 +182,12 @@ spec:
           required: true
           size: 20Gi
       env:
+        # Shared with the document server when office editing is chosen; unused otherwise.
+        - name: ONLYOFFICE_JWT_SECRET
+          valueFrom:
+            generate: secret
+            length: 32
+            format: hex
         - name: MYSQL_HOST
           value: '{{components.db.host}}'
         - name: MYSQL_DATABASE
@@ -278,38 +284,42 @@ spec:
         timeout: 10s
         retries: 6
 
-    # ── 4. Collabora Online (document server) — optional, gated by option "office" ──
-    - name: collabora
+    # ── 4. ONLYOFFICE Docs (document server) — optional, gated by option "office" ──
+    - name: onlyoffice
       when:
         option: office
+      dependsOn:
+        - app
       image:
         registry: docker.io
-        repository: collabora/code
-        tag: '26.04.6.1.1'
+        repository: onlyoffice/documentserver
+        tag: '10.0.0.1'
       ports:
         - name: http
-          internal: 9980
+          internal: 80
           expose: true
           protocol: http
       env:
-        # Allow any WOPI host (the Nextcloud FQDN is assigned at install time).
-        - name: domain
-          value: '.*'
-        # TLS terminated by Flui's ingress (plain HTTP behind it). server_name is
-        # this component's own public FQDN — known before create thanks to the
-        # deterministic slug — so Collabora emits PUBLIC editor URLs (urlsrc) in
-        # its discovery even when Nextcloud fetches it over the internal service.
-        - name: extra_params
-          value: '--o:ssl.enable=false --o:ssl.termination=true --o:server_name={{self.fqdn}}'
-        - name: DONT_GEN_SSL_CERT
-          value: '1'
+        - name: JWT_ENABLED
+          value: 'true'
+        - name: JWT_SECRET
+          value: '{{components.app.env.ONLYOFFICE_JWT_SECRET}}'
+          secret: true
+        # It downloads and saves documents through Nextcloud's in-cluster
+        # address, a private one, which it refuses by default; requests to it
+        # are JWT-signed, so only Nextcloud can point it anywhere. Cloud
+        # metadata addresses stay refused.
+        - name: ALLOW_PRIVATE_IP_ADDRESS
+          value: 'true'
+        - name: ALLOW_META_IP_ADDRESS
+          value: 'false'
       resources:
         requests:
-          cpu: 150m
-          memory: 768Mi
+          cpu: 200m
+          memory: 1Gi
         limits:
           cpu: '2'
-          memory: 2Gi
+          memory: 3Gi
       scaling:
         horizontal:
           enabled: false
@@ -318,22 +328,23 @@ spec:
           mode: Recreate
           bounds:
             cpu:
-              min: 150m
-              max: '2'
+              min: 200m
+              max: '4'
             memory:
-              min: 768Mi
-              max: 2Gi
+              min: 1Gi
+              max: 4Gi
           updatePolicy:
             trigger:
               - OOMKilled
             cooldown: 10m
       healthcheck:
-        type: tcp
-        port: 9980
-        initialDelay: 20s
+        type: http
+        path: /healthcheck
+        port: 80
+        initialDelay: 60s
         interval: 15s
         timeout: 5s
-        retries: 10
+        retries: 12
 
   auth:
     default: native
@@ -353,8 +364,8 @@ spec:
   # Install-time feature toggles.
   options:
     - key: office
-      label: 'Office editing (Collabora)'
-      description: 'Edit Word/Excel/PowerPoint in the browser via Nextcloud Office (Collabora Online). Adds a document-server component.'
+      label: 'Office editing (ONLYOFFICE)'
+      description: 'Edit Word, Excel and PowerPoint files in the browser with ONLYOFFICE Docs Community (AGPL, recommended for up to 20 people editing). Adds a document server.'
       default: false
 
   # Nextcloud is configured via the `occ` CLI, not HTTP/config-file — so these
@@ -392,11 +403,9 @@ spec:
             --clientid={{oidc.clientId}} --clientsecret={{oidc.clientSecret}}
             --discoveryuri={{oidc.issuerUrl}}/.well-known/openid-configuration
             --unique-uid=0" www-data
-    # Office only: install Nextcloud Office (richdocuments) and point it at the
-    # Collabora component over the INTERNAL k8s service (no public cert needed
-    # for the server-side discovery fetch → no cert-issuance race, no retry).
-    # The browser still loads the editor from Collabora's public URL, which
-    # Collabora advertises in discovery via its server_name (set above).
+    # Office only: install the ONLYOFFICE connector and point it at the
+    # document server. The browser loads the editors from its public address;
+    # Nextcloud and the document server talk to each other over the cluster.
     - name: enable-office
       when:
         option: office
@@ -405,10 +414,15 @@ spec:
           - /bin/sh
           - -c
           - >
-            su -s /bin/sh -c "(php occ app:install richdocuments || php occ
-            app:enable richdocuments); php occ config:app:set richdocuments
-            wopi_url --value=http://{{components.collabora.host}}:9980; php occ
-            richdocuments:activate-config" www-data
+            su -s /bin/sh -c "(php occ app:install onlyoffice || php occ
+            app:enable onlyoffice); php occ config:app:set onlyoffice
+            DocumentServerUrl --value=https://{{components.onlyoffice.fqdn}}/;
+            php occ config:app:set onlyoffice DocumentServerInternalUrl
+            --value=http://{{components.onlyoffice.host}}/; php occ
+            config:app:set onlyoffice StorageUrl
+            --value=http://{{components.app.host}}/; php occ config:app:set
+            onlyoffice jwt_secret --value=$ONLYOFFICE_JWT_SECRET; php occ
+            onlyoffice:documentserver --check" www-data
 
   smokeTest:
     type: http

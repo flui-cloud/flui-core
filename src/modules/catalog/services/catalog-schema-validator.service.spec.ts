@@ -77,7 +77,7 @@ describe('CatalogSchemaValidatorService', () => {
       'nextcloud.flui.yaml',
       'penpot.flui.yaml',
       'twenty.flui.yaml',
-      'n8n.flui.yaml',
+      'activepieces.flui.yaml',
       'ferretdb.flui.yaml',
       'wordpress-composed.flui.yaml',
       'flui-demo-activity.flui.yaml',
@@ -156,6 +156,23 @@ describe('CatalogSchemaValidatorService', () => {
             {
               name: 'KEY',
               valueFrom: { generate: 'rsa-private-key', bits: 1024 },
+            },
+          ]),
+        ),
+      ).toThrow('Invalid catalog manifest');
+    });
+
+    it('refuses a certificate encoding it does not know', () => {
+      expect(() =>
+        service.validate(
+          withEnv([
+            {
+              name: 'KEY',
+              valueFrom: { generate: 'rsa-private-key', bits: 2048 },
+            },
+            {
+              name: 'CERT',
+              valueFrom: { certificateFor: 'KEY', encoding: 'der' },
             },
           ]),
         ),

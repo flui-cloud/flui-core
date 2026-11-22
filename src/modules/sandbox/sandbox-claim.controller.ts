@@ -16,6 +16,7 @@ import { SandboxReserveService } from './services/sandbox-reserve.service';
 import { SandboxSessionDto } from './dto/sandbox-session.dto';
 import { SandboxEntryService } from './services/sandbox-entry.service';
 import { SandboxTenantEntity } from './entities/sandbox-tenant.entity';
+import { trialExcludedCatalog } from './constants/sandbox-catalog';
 import {
   SANDBOX_GUEST_REQUEST,
   SandboxGuestRequest,
@@ -89,6 +90,7 @@ export class SandboxClaimController {
       workloadTtlHours: this.config.workloadTtlHours,
       appsKeptUntil: appsKeptUntil(tenant, this.config.workloadIdleMs),
       loginUrl: this.entry.origin,
+      catalogExcluded: trialExcludedCatalog(),
     };
   }
 }
