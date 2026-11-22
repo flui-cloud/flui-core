@@ -34,6 +34,7 @@ describe('a dedicated dependency and the pooler', () => {
       'u1@example.com',
       'p1',
       { pooler: false },
+      false,
     );
   });
 });

@@ -99,6 +99,8 @@ export class CatalogDependencyResolverService {
       waitTimeoutMs?: number;
       pollIntervalMs?: number;
       projectId?: string | null;
+      /** The dependent's own placement decision, which a dedicated block inherits. */
+      allowMasterPlacement?: boolean;
     },
   ): Promise<ResolveAllResult> {
     const result: ResolveAllResult = {
@@ -133,6 +135,7 @@ export class CatalogDependencyResolverService {
                 userId,
                 userEmail,
                 projectId: opts?.projectId,
+                allowMasterPlacement: opts?.allowMasterPlacement ?? false,
                 waitTimeoutMs,
                 pollIntervalMs,
               },
@@ -179,6 +182,7 @@ export class CatalogDependencyResolverService {
       userId?: string;
       userEmail?: string;
       projectId?: string | null;
+      allowMasterPlacement: boolean;
       waitTimeoutMs: number;
       pollIntervalMs: number;
     },
@@ -192,6 +196,7 @@ export class CatalogDependencyResolverService {
       opts.userEmail,
       opts.projectId,
       { [POOLER_OPTION]: false },
+      opts.allowMasterPlacement,
     );
     dedicatedInstallIds.push(install.id);
     const running = await this.waitForRunning(

@@ -263,6 +263,7 @@ export class CatalogInstallerService {
     userEmail?: string,
     projectId?: string | null,
     options?: Record<string, boolean>,
+    allowMasterPlacement = false,
   ): Promise<{
     install: CatalogInstallEntity;
     operation: InfrastructureOperationEntity;
@@ -293,6 +294,7 @@ export class CatalogInstallerService {
       displayName: definition.name,
       slug: installSlug,
       skipEndpoint: true,
+      allowMasterPlacement,
       options: resolveInstallOptions(definition.manifest.spec, options),
       userInputs: {},
       envOverrides: {},

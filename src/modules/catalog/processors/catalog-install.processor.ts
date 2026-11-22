@@ -297,7 +297,10 @@ export class CatalogInstallProcessor {
             install.clusterId,
             install.userId,
             install.userEmail,
-            { projectId: placement.project.id },
+            {
+              projectId: placement.project.id,
+              allowMasterPlacement: await this.allowMasterPlacementFor(install),
+            },
           )
         : {
             resolved: [],
