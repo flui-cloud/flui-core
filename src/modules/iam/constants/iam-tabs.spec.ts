@@ -48,4 +48,22 @@ describe('the tabs an application opens', () => {
       ),
     ).toContain(APP_TAB.SESSIONS);
   });
+
+  it('lists the diagnoses and the pod debug view, both behind data:access', () => {
+    const holder = new Set<string>([
+      IAM_PERMISSION.APP_READ,
+      IAM_PERMISSION.DATA_ACCESS,
+    ]);
+    expect(tabsForPermissions(holder)).toEqual(
+      expect.arrayContaining([APP_TAB.DIAGNOSES, APP_TAB.DEBUG_PODS]),
+    );
+    expect(tabsForPermissions(reader)).not.toContain(APP_TAB.DIAGNOSES);
+    expect(tabsForPermissions(reader)).not.toContain(APP_TAB.DEBUG_PODS);
+  });
+
+  it('opens the diagnoses of the showcase, never its pod debug view', () => {
+    const tabs = tabsForPermissions(reader, { showcase: true });
+    expect(tabs).toContain(APP_TAB.DIAGNOSES);
+    expect(tabs).not.toContain(APP_TAB.DEBUG_PODS);
+  });
 });

@@ -38,6 +38,8 @@ export const APP_TAB = {
   SESSIONS: 'sessions',
   IDENTITY: 'identity',
   MESSAGING: 'messaging',
+  DIAGNOSES: 'diagnoses',
+  DEBUG_PODS: 'debug-pods',
 } as const;
 
 export type AppTabKey = (typeof APP_TAB)[keyof typeof APP_TAB];
@@ -66,6 +68,9 @@ export const APP_TAB_PERMISSION: Record<AppTabKey, IamPermission> = {
   [APP_TAB.IDENTITY]: IAM_PERMISSION.APP_READ,
   // Whether the app has its NATS account; connecting asks app:write at the API.
   [APP_TAB.MESSAGING]: IAM_PERMISSION.APP_READ,
+  // Dismissing or applying a diagnosis asks app:write at the API.
+  [APP_TAB.DIAGNOSES]: IAM_PERMISSION.APP_READ,
+  [APP_TAB.DEBUG_PODS]: IAM_PERMISSION.APP_READ,
 };
 
 /** Tabs that render the application's own data, and so also need `data:access`. */
@@ -79,11 +84,14 @@ export const APP_TAB_SHOWS_DATA: ReadonlySet<AppTabKey> = new Set([
   APP_TAB.GATEWAY,
   APP_TAB.SESSIONS,
   APP_TAB.IDENTITY,
+  APP_TAB.DIAGNOSES,
+  APP_TAB.DEBUG_PODS,
 ]);
 
 /** Data tabs an application in the showcase opens without `data:access` — the reads `@OpenOnShowcase()` marks. */
 export const APP_TAB_OPEN_ON_SHOWCASE: ReadonlySet<AppTabKey> = new Set([
   APP_TAB.LOGS,
+  APP_TAB.DIAGNOSES,
 ]);
 
 /**
