@@ -1,5 +1,6 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isUUID } from 'class-validator';
 import { In, Repository } from 'typeorm';
 import { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
 import { ApiKeyEntity } from '../../auth/entities/api-key.entity';
@@ -408,7 +409,9 @@ export class AgentActivityService {
   }
 
   private async keyFacts(ids: string[]): Promise<Map<string, KeyFacts>> {
-    const unique = [...new Set(ids)];
+    // A keyless surface such as the in-product assistant records a symbolic
+    // actor id that names no row and that a uuid column refuses to compare.
+    const unique = [...new Set(ids)].filter((id) => isUUID(id));
     if (!unique.length) return new Map();
     const rows = await this.keys.find({
       where: { id: In(unique) },

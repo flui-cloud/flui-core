@@ -8,6 +8,7 @@ import { McpToolCallLogEntity } from '../entities/mcp-tool-call-log.entity';
 import { McpAuditRepository } from '../repositories/mcp-audit.repository';
 import { AgentConcessionEntity } from '../../action-cycle/entities/agent-concession.entity';
 import { MCP_SCOPE } from '../constants/mcp-scopes';
+import { ASSISTANT_AGENT_KEY_ID } from '../../auth/utils/actor-surface';
 import { PolicyEngine } from '../../iam/interfaces/policy-engine.interface';
 import {
   InfrastructureOperationEntity,
@@ -17,6 +18,7 @@ import {
 
 const OWNER = 'u-owner';
 const OTHER = 'u-other';
+const KEY = '22222222-2222-4222-8222-222222222222';
 
 const caller = (over: Partial<AuthenticatedUser> = {}): AuthenticatedUser =>
   ({
@@ -38,7 +40,7 @@ const logRow = (
     error: null,
     outcome: null,
     actor_kind: 'agent',
-    actor_key_id: 'k-1',
+    actor_key_id: KEY,
     args: { nodeType: 'worker', name: '****' },
     operation_id: 'op-1',
     proposal_id: null,
@@ -67,6 +69,7 @@ const operationRow = (
 interface Harness {
   service: AgentActivityService;
   audit: { page: jest.Mock; findById: jest.Mock; identities: jest.Mock };
+  keys: { find: jest.Mock };
   lastFilter: () => ActivityFilter | undefined;
 }
 
@@ -107,7 +110,7 @@ function build(
     find: jest.fn(
       async () =>
         opts.keys ?? [
-          { id: 'k-1', name: 'release-bot', revoked: false, lastUsedAt: null },
+          { id: KEY, name: 'release-bot', revoked: false, lastUsedAt: null },
         ],
     ),
   };
@@ -144,6 +147,7 @@ function build(
       policy,
     ),
     audit,
+    keys,
     lastFilter: () => captured,
   };
 }
@@ -155,7 +159,7 @@ describe('GET /agent/activity — the register, read back', () => {
     expect(page.scope).toBe('own');
     expect(page.entries[0]).toMatchObject({
       actorKind: 'agent',
-      actorKeyId: 'k-1',
+      actorKeyId: KEY,
       actorKeyName: 'release-bot',
       actorKeyRevoked: false,
       tool: 'cluster_add_worker',
@@ -165,8 +169,20 @@ describe('GET /agent/activity — the register, read back', () => {
   it('keeps the row when the key it names has been deleted', async () => {
     const { service } = build({ keys: [] });
     const page = await service.page(caller(), {});
-    expect(page.entries[0].actorKeyId).toBe('k-1');
+    expect(page.entries[0].actorKeyId).toBe(KEY);
     expect(page.entries[0].actorKeyName).toBeNull();
+  });
+
+  it('never asks the key table about the assistant, which has no key row', async () => {
+    const { service, keys } = build({
+      rows: [logRow({ actor_key_id: ASSISTANT_AGENT_KEY_ID })],
+    });
+    const page = await service.page(caller(), {});
+    expect(keys.find).not.toHaveBeenCalled();
+    expect(page.entries[0]).toMatchObject({
+      actorKeyId: ASSISTANT_AGENT_KEY_ID,
+      actorKeyName: null,
+    });
   });
 
   it('pins the caller to their own rows', async () => {
@@ -195,14 +211,14 @@ describe('GET /agent/activity — the register, read back', () => {
     const { service, lastFilter } = build();
     await service.page(caller(), {
       actorKind: 'agent',
-      keyId: 'k-1',
+      keyId: KEY,
       tool: 'app_delete',
       allowed: 'false',
       since: '2026-08-01T00:00:00.000Z',
     });
     expect(lastFilter()).toMatchObject({
       actorKind: 'agent',
-      actorKeyId: 'k-1',
+      actorKeyId: KEY,
       tool: 'app_delete',
       allowed: false,
       since: new Date('2026-08-01T00:00:00.000Z'),
@@ -645,7 +661,7 @@ describe('GET /agent/activity/identities — the last activity', () => {
       identities: [
         {
           actorKind: 'agent',
-          actorKeyId: 'k-1',
+          actorKeyId: KEY,
           userId: OWNER,
           calls: 12,
           refused: 2,
@@ -657,7 +673,7 @@ describe('GET /agent/activity/identities — the last activity', () => {
       ],
       keys: [
         {
-          id: 'k-1',
+          id: KEY,
           name: 'release-bot',
           revoked: true,
           lastUsedAt: new Date('2026-08-24T11:00:00Z'),
