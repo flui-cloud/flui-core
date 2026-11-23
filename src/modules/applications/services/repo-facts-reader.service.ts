@@ -30,6 +30,7 @@ import { repoFactsFrom } from '../repo-facts.core';
  * it does not produce (`not-connected`) is decided before a read is attempted. */
 const UNREAD_REASON: Record<RepoTreeUnreadReason, RepoUnreadReason> = {
   'no-credential': 'no-credential',
+  'credential-rejected': 'no-credential',
   'not-found': 'not-found',
   'too-large': 'too-large',
   unreadable: 'unreadable',

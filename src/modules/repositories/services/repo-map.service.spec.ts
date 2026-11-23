@@ -248,4 +248,27 @@ describe('RepoMapService', () => {
     expect(response.verdict.outcome).toBe('not_assessed');
     expect(response.verdict.remedy).toContain('Reconnect the GitHub');
   });
+
+  it('names the GitHub credential that was rejected', async () => {
+    const { service } = serviceUnder({
+      tree: {
+        readTree: async () => ({
+          read: false as const,
+          reason: 'credential-rejected' as const,
+          credential: 'github-account' as const,
+          repoFullName: 'acme/probe',
+          ref: 'main',
+        }),
+      } as Partial<RepoTreeReaderService>,
+    });
+
+    const response = await service.mapFor('user-1', REQUEST);
+
+    expect(response.read).toMatchObject({
+      ok: false,
+      reason: 'credential-rejected',
+      credential: 'github-account',
+    });
+    expect(response.verdict.remedy).toContain('Reconnect GitHub');
+  });
 });

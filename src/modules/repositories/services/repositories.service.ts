@@ -14,7 +14,9 @@ import { GitValidationService } from '../../shared/validation/services/git-valid
 import { GitHubProviderService } from '../../git/services/github-provider.service';
 import { GitProviderCredentials } from '../../git/interfaces/git-provider.interface';
 import {
+  GithubCredential,
   githubCredentialRejected,
+  isGitAuthFailure,
   isGithubCredentialRejection,
 } from '../../git/utils/github-credential-rejected';
 import { GitHubOAuthService } from './github-oauth.service';
@@ -548,6 +550,9 @@ export class RepositoriesService {
       }
 
       if (!cloneResult.success) {
+        if (isGitAuthFailure(cloneResult.error)) {
+          throw githubCredentialRejected(await this.repositoryCredential());
+        }
         throw new InternalServerErrorException(
           `Failed to clone repository: ${cloneResult.error}`,
         );
@@ -1020,6 +1025,9 @@ export class RepositoriesService {
       );
 
       if (!cloneResult.success) {
+        if (isGitAuthFailure(cloneResult.error)) {
+          throw githubCredentialRejected(await this.repositoryCredential());
+        }
         throw new InternalServerErrorException(
           `Failed to clone repository: ${cloneResult.error}`,
         );
@@ -1157,10 +1165,14 @@ export class RepositoriesService {
   ): Promise<GitProviderCredentials> {
     return {
       accessToken: await this.resolveAccessToken(userId, repository),
-      credential: (await this.tokenResolver.isAppMode())
-        ? 'github-app'
-        : 'repository-token',
+      credential: await this.repositoryCredential(),
     };
+  }
+
+  private async repositoryCredential(): Promise<GithubCredential> {
+    return (await this.tokenResolver.isAppMode())
+      ? 'github-app'
+      : 'repository-token';
   }
 
   private async resolveAccessToken(

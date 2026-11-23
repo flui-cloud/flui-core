@@ -130,6 +130,38 @@ describe('RepoTreeReaderService — cartographer wiring', () => {
     });
   });
 
+  it('says the credential was rejected, and which one, when GitHub answers 401', async () => {
+    const octokit = {
+      repos: {
+        getCommit: async () => {
+          throw Object.assign(new Error('Bad credentials'), { status: 401 });
+        },
+        downloadTarballArchive: async () => {
+          throw new Error('should not be called');
+        },
+      },
+    };
+    const tokenResolver = {
+      getOctokit: async () => octokit,
+      isAppMode: async () => false,
+    } as unknown as GitHubTokenResolverService;
+
+    const result = await new RepoTreeReaderService(tokenResolver).readTree(
+      'user-1',
+      'octocat',
+      'hello',
+      'main',
+    );
+
+    expect(result).toEqual({
+      read: false,
+      reason: 'credential-rejected',
+      credential: 'github-account',
+      repoFullName: 'octocat/hello',
+      ref: 'main',
+    });
+  });
+
   it('rejects the whole read when the archive carries a path escaping its root', async () => {
     const commitSha = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
     const gz = buildTarGz([

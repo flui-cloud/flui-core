@@ -6,6 +6,7 @@ import { GitHubProviderService } from '../services/github-provider.service';
 import {
   GITHUB_TOKEN_INVALID,
   githubCredentialRejected,
+  isGitAuthFailure,
   isGithubCredentialRejection,
 } from './github-credential-rejected';
 
@@ -66,5 +67,26 @@ describe('listing branches with a rejected token', () => {
     await expect(
       provider.listBranches({ accessToken: 't' }, 'o', 'r'),
     ).rejects.toThrow('Failed to list branches: boom');
+  });
+});
+
+describe('a clone refused for its token', () => {
+  it('is recognised from what git prints', () => {
+    expect(
+      isGitAuthFailure(
+        "fatal: Authentication failed for 'https://github.com/o/r.git/'",
+      ),
+    ).toBe(true);
+    expect(
+      isGitAuthFailure(
+        "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      ),
+    ).toBe(true);
+    expect(
+      isGitAuthFailure(
+        'fatal: Remote branch nope not found in upstream origin',
+      ),
+    ).toBe(false);
+    expect(isGitAuthFailure(undefined)).toBe(false);
   });
 });

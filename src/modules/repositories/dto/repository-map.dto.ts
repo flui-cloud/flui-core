@@ -976,9 +976,16 @@ export class ReadBoundaryDto {
   @Sensitivity(Sensitivity.PUBLIC)
   @ApiPropertyOptional({
     description:
-      'Why it could not be read: no-credential, not-found, too-large, unreadable, rejected',
+      'Why it could not be read: no-credential, credential-rejected, not-found, too-large, unreadable, rejected',
   })
   reason?: string;
+
+  @Sensitivity(Sensitivity.PUBLIC)
+  @ApiPropertyOptional({
+    description:
+      'With credential-rejected, which GitHub credential was refused: github-app, github-account, repository-token or packages-token',
+  })
+  credential?: string;
 
   // `owner` is a GitHub org or user handle: the same thing `tenant-identity`
   // already covers for an email or an org name.

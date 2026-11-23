@@ -63,6 +63,7 @@ import {
   ClusterCapacityDto,
   RepositoryMapResponseDto,
 } from '../dto/repository-map.dto';
+import type { GithubCredential } from '../../git/utils/github-credential-rejected';
 
 /**
  * What a unit with no declared resources actually asks the cluster for.
@@ -127,7 +128,7 @@ export class RepoMapService {
     }
 
     if (tree.read === false) {
-      return this.unreadResponse(request, tree.reason);
+      return this.unreadResponse(request, tree.reason, tree.credential);
     }
 
     let map: RepoMap;
@@ -210,6 +211,7 @@ export class RepoMapService {
   private unreadResponse(
     request: RepoMapRequest,
     reason: string,
+    credential?: GithubCredential,
   ): RepositoryMapResponseDto {
     const repoFullName = `${request.owner}/${request.repo}`;
     return {
@@ -219,6 +221,7 @@ export class RepoMapService {
       read: {
         ok: false,
         reason,
+        ...(credential ? { credential } : {}),
         repoFullName,
         ref: request.ref,
         limits: {
@@ -440,6 +443,8 @@ export class RepoMapService {
 const UNREAD_REMEDY: Record<string, string> = {
   'no-credential':
     'Reconnect the GitHub integration for this owner, then run the map again.',
+  'credential-rejected':
+    'GitHub rejected the credential Flui used. Reconnect GitHub from the Repositories page, then run the map again.',
   'not-found':
     'Check that the branch or commit exists and that the connected credential can see this repository.',
   'too-large':

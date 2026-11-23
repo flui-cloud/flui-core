@@ -28,6 +28,10 @@ import {
   type ArchiveRejectReason,
 } from './repo-archive-scan.util';
 import type { RepoSnapshotLimits } from '../interfaces/repo-snapshot.interface';
+import {
+  GithubCredential,
+  isGithubCredentialRejection,
+} from '../../git/utils/github-credential-rejected';
 
 /** Why no `RepoScan` came back. A superset of `ArchiveRejectReason`: the two
  * extra reasons are about reaching the repository at all, before any byte of
@@ -35,6 +39,7 @@ import type { RepoSnapshotLimits } from '../interfaces/repo-snapshot.interface';
 export type RepoTreeUnreadReason =
   | ArchiveRejectReason
   | 'no-credential'
+  | 'credential-rejected'
   | 'not-found';
 
 export interface RepoTreeRead {
@@ -57,6 +62,8 @@ export interface RepoTreeUnread {
   reason: RepoTreeUnreadReason;
   repoFullName: string;
   ref: string;
+  /** Set with `credential-rejected`: which GitHub credential was refused. */
+  credential?: GithubCredential;
 }
 
 export type RepoTreeReadResult = RepoTreeRead | RepoTreeUnread;
@@ -64,6 +71,8 @@ export type RepoTreeReadResult = RepoTreeRead | RepoTreeUnread;
 type Octokit = Awaited<ReturnType<GitHubTokenResolverService['getOctokit']>>;
 
 const TIMEOUT = Symbol('repo-tree-reader:timeout');
+
+type ReachFailure = 'not-found' | 'unreadable' | 'credential-rejected';
 
 @Injectable()
 export class RepoTreeReaderService {
@@ -113,7 +122,7 @@ export class RepoTreeReaderService {
     }
 
     const commit = await this.resolveCommitSha(octokit, owner, repo, ref);
-    if (commit.ok === false) return unread(commit.reason);
+    if (commit.ok === false) return this.unreadFor(commit.reason, unread);
 
     const archive = await this.downloadArchive(
       octokit,
@@ -121,7 +130,7 @@ export class RepoTreeReaderService {
       repo,
       commit.sha,
     );
-    if (archive.ok === false) return unread(archive.reason);
+    if (archive.ok === false) return this.unreadFor(archive.reason, unread);
 
     const scanned = await scanArchive(archive.bytes, limits);
     if (scanned.ok === false) return unread(scanned.reason);
@@ -147,20 +156,33 @@ export class RepoTreeReaderService {
     };
   }
 
+  private async unreadFor(
+    reason: ReachFailure,
+    unread: (reason: RepoTreeUnreadReason) => RepoTreeUnread,
+  ): Promise<RepoTreeUnread> {
+    if (reason !== 'credential-rejected') return unread(reason);
+    return {
+      ...unread(reason),
+      credential: (await this.tokenResolver.isAppMode())
+        ? 'github-app'
+        : 'github-account',
+    };
+  }
+
   private async resolveCommitSha(
     octokit: Octokit,
     owner: string,
     repo: string,
     ref: string,
-  ): Promise<
-    | { ok: true; sha: string }
-    | { ok: false; reason: 'not-found' | 'unreadable' }
-  > {
+  ): Promise<{ ok: true; sha: string } | { ok: false; reason: ReachFailure }> {
     try {
       const { data } = await octokit.repos.getCommit({ owner, repo, ref });
       return { ok: true, sha: data.sha };
     } catch (error) {
       if (error?.status === 404) return { ok: false, reason: 'not-found' };
+      if (isGithubCredentialRejection(error)) {
+        return { ok: false, reason: 'credential-rejected' };
+      }
       this.logger.warn(
         `Could not resolve ${owner}/${repo}@${ref}: ${error.message}`,
       );
@@ -174,8 +196,7 @@ export class RepoTreeReaderService {
     repo: string,
     commitSha: string,
   ): Promise<
-    | { ok: true; bytes: Buffer }
-    | { ok: false; reason: 'not-found' | 'unreadable' }
+    { ok: true; bytes: Buffer } | { ok: false; reason: ReachFailure }
   > {
     try {
       const response = await octokit.repos.downloadTarballArchive({
@@ -186,6 +207,9 @@ export class RepoTreeReaderService {
       return { ok: true, bytes: Buffer.from(response.data as ArrayBuffer) };
     } catch (error) {
       if (error?.status === 404) return { ok: false, reason: 'not-found' };
+      if (isGithubCredentialRejection(error)) {
+        return { ok: false, reason: 'credential-rejected' };
+      }
       this.logger.warn(
         `Could not download archive for ${owner}/${repo}@${commitSha}: ${error.message}`,
       );

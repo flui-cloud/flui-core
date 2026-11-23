@@ -33,6 +33,14 @@ export function isGithubCredentialRejection(error: unknown): boolean {
   return (failure?.status ?? failure?.response?.status) === 401;
 }
 
+const GIT_AUTH_FAILURE =
+  /authentication failed|invalid username or password|could not read username|terminal prompts disabled/i;
+
+/** A git clone over HTTPS refused because the token in the URL was not accepted. */
+export function isGitAuthFailure(message: string | undefined): boolean {
+  return !!message && GIT_AUTH_FAILURE.test(message);
+}
+
 /**
  * 424, not 401: the caller's own session is valid, and a 401 tells every
  * client to sign the person out.
