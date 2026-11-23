@@ -5,9 +5,11 @@ import {
   GitWebhookDto,
   CreateWebhookDto,
 } from '../dto/git-repository.dto';
+import { GithubCredential } from '../utils/github-credential-rejected';
 
 export interface GitProviderCredentials {
   accessToken: string;
+  credential?: GithubCredential;
   refreshToken?: string;
   expiresAt?: Date;
 }

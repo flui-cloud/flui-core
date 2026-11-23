@@ -11,10 +11,24 @@ import {
   GitWebhookDto,
   CreateWebhookDto,
 } from '../dto/git-repository.dto';
+import {
+  githubCredentialRejected,
+  isGithubCredentialRejection,
+} from '../utils/github-credential-rejected';
 
 @Injectable()
 export class GitHubProviderService implements IGitProvider {
   private readonly logger = new Logger(GitHubProviderService.name);
+
+  private failure(
+    error: unknown,
+    credentials: GitProviderCredentials,
+    sentence: string,
+  ): Error {
+    return isGithubCredentialRejection(error)
+      ? githubCredentialRejected(credentials.credential ?? 'github-account')
+      : new Error(sentence);
+  }
 
   private getOctokit(credentials: GitProviderCredentials): Octokit {
     return new Octokit({
@@ -39,7 +53,11 @@ export class GitHubProviderService implements IGitProvider {
       return response.data.map((repo) => this.mapToRepositoryDto(repo));
     } catch (error) {
       this.logger.error('Failed to list GitHub repositories', error.stack);
-      throw new Error(`Failed to list repositories: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to list repositories: ${error.message}`,
+      );
     }
   }
 
@@ -57,7 +75,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to get GitHub repository: ${owner}/${repo}`,
         error.stack,
       );
-      throw new Error(`Failed to get repository: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to get repository: ${error.message}`,
+      );
     }
   }
 
@@ -80,7 +102,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to list branches: ${owner}/${repo}`,
         error.stack,
       );
-      throw new Error(`Failed to list branches: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to list branches: ${error.message}`,
+      );
     }
   }
 
@@ -108,7 +134,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to get branch: ${owner}/${repo}/${branchName}`,
         error.stack,
       );
-      throw new Error(`Failed to get branch: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to get branch: ${error.message}`,
+      );
     }
   }
 
@@ -148,7 +178,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to list commits: ${owner}/${repo}`,
         error.stack,
       );
-      throw new Error(`Failed to list commits: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to list commits: ${error.message}`,
+      );
     }
   }
 
@@ -182,7 +216,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to get commit: ${owner}/${repo}/${sha}`,
         error.stack,
       );
-      throw new Error(`Failed to get commit: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to get commit: ${error.message}`,
+      );
     }
   }
 
@@ -220,7 +258,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to create webhook: ${owner}/${repo}`,
         error.stack,
       );
-      throw new Error(`Failed to create webhook: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to create webhook: ${error.message}`,
+      );
     }
   }
 
@@ -244,7 +286,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to delete webhook: ${owner}/${repo}/${webhookId}`,
         error.stack,
       );
-      throw new Error(`Failed to delete webhook: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to delete webhook: ${error.message}`,
+      );
     }
   }
 
@@ -270,7 +316,11 @@ export class GitHubProviderService implements IGitProvider {
         `Failed to list webhooks: ${owner}/${repo}`,
         error.stack,
       );
-      throw new Error(`Failed to list webhooks: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to list webhooks: ${error.message}`,
+      );
     }
   }
 
@@ -303,7 +353,11 @@ export class GitHubProviderService implements IGitProvider {
       };
     } catch (error) {
       this.logger.error('Failed to get GitHub user info', error.stack);
-      throw new Error(`Failed to get user info: ${error.message}`);
+      throw this.failure(
+        error,
+        credentials,
+        `Failed to get user info: ${error.message}`,
+      );
     }
   }
 

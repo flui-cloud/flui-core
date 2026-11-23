@@ -12,6 +12,11 @@ import { RepositoryCredentialsRepository } from '../repositories/repository-cred
 import { EncryptionService } from '../../shared/encryption/services/encryption.service';
 import { GitValidationService } from '../../shared/validation/services/git-validation.service';
 import { GitHubProviderService } from '../../git/services/github-provider.service';
+import { GitProviderCredentials } from '../../git/interfaces/git-provider.interface';
+import {
+  githubCredentialRejected,
+  isGithubCredentialRejection,
+} from '../../git/utils/github-credential-rejected';
 import { GitHubOAuthService } from './github-oauth.service';
 import { GitHubTokenResolverService } from './github-token-resolver.service';
 import { GitHubAppService } from './github-app.service';
@@ -391,7 +396,7 @@ export class RepositoriesService {
       throw new NotFoundException('Repository not found');
     }
 
-    const accessToken = await this.resolveAccessToken(userId, repository);
+    const credentials = await this.credentialsFor(userId, repository);
     const parsedUrl = this.gitValidationService.parseGitUrl(
       repository.repositoryUrl,
     );
@@ -402,7 +407,7 @@ export class RepositoriesService {
 
     if (repository.provider === GitProvider.GITHUB) {
       return this.githubProviderService.listBranches(
-        { accessToken },
+        credentials,
         parsedUrl.owner,
         parsedUrl.repo,
       );
@@ -425,7 +430,7 @@ export class RepositoriesService {
       throw new NotFoundException('Repository not found');
     }
 
-    const accessToken = await this.resolveAccessToken(userId, repository);
+    const credentials = await this.credentialsFor(userId, repository);
     const parsedUrl = this.gitValidationService.parseGitUrl(
       repository.repositoryUrl,
     );
@@ -436,7 +441,7 @@ export class RepositoriesService {
 
     if (repository.provider === GitProvider.GITHUB) {
       return this.githubProviderService.listCommits(
-        { accessToken },
+        credentials,
         parsedUrl.owner,
         parsedUrl.repo,
         branch || repository.defaultBranch,
@@ -888,6 +893,13 @@ export class RepositoriesService {
         // Empty repo or unknown ref — treat as "no manifests".
         return { branch: ref, manifests: [] };
       }
+      if (isGithubCredentialRejection(error)) {
+        throw githubCredentialRejected(
+          (await this.tokenResolver.isAppMode())
+            ? 'github-app'
+            : 'github-account',
+        );
+      }
       this.logger.warn(
         `Could not list flui.yaml manifests for ${owner}/${repo}@${ref}: ${error.message}`,
       );
@@ -1139,6 +1151,18 @@ export class RepositoriesService {
    * In GitHub App mode, fetches a new installation token (the stored one may be expired).
    * In OAuth/PAT mode, decrypts the stored token (long-lived).
    */
+  private async credentialsFor(
+    userId: string,
+    repository: RepositoryEntity,
+  ): Promise<GitProviderCredentials> {
+    return {
+      accessToken: await this.resolveAccessToken(userId, repository),
+      credential: (await this.tokenResolver.isAppMode())
+        ? 'github-app'
+        : 'repository-token',
+    };
+  }
+
   private async resolveAccessToken(
     userId: string,
     repository: RepositoryEntity,

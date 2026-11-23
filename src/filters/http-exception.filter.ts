@@ -81,6 +81,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // Which input of a multi-field request was refused, and the address it named.
       'field',
       'fqdn',
+      // Which GitHub credential was rejected, so the client can send the person
+      // to the right place to replace it.
+      'credential',
     ] as const;
     const carried: Record<string, unknown> = {};
     for (const field of CARRIED) {

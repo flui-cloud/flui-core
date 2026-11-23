@@ -3,10 +3,13 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
-  UnauthorizedException,
   BadRequestException,
 } from '@nestjs/common';
 import { Octokit } from '@octokit/rest';
+import {
+  GithubCredential,
+  githubCredentialRejected,
+} from '../../git/utils/github-credential-rejected';
 import { GitHubTokenResolverService } from './github-token-resolver.service';
 import { GithubAppUserAuthService } from './github-app-user-auth.service';
 
@@ -39,12 +42,20 @@ export class GhcrPackagesService {
   private async getOctokitForGhcr(
     userId: string,
     owner: string,
-  ): Promise<Octokit> {
+  ): Promise<{ octokit: Octokit; credential: GithubCredential }> {
     const pat = await this.userAuth.getDecryptedGhcrPat(userId);
     if (pat) {
-      return new Octokit({ auth: pat });
+      return {
+        octokit: new Octokit({ auth: pat }),
+        credential: 'packages-token',
+      };
     }
-    return this.tokenResolver.getOctokit(userId, owner);
+    return {
+      octokit: await this.tokenResolver.getOctokit(userId, owner),
+      credential: (await this.tokenResolver.isAppMode())
+        ? 'github-app'
+        : 'github-account',
+    };
   }
 
   /**
@@ -103,7 +114,7 @@ export class GhcrPackagesService {
     owner: string,
     packageName: string,
   ): Promise<GhcrPackageVersion[]> {
-    const octokit = await this.getOctokitForGhcr(userId, owner);
+    const { octokit, credential } = await this.getOctokitForGhcr(userId, owner);
     const ownerType = await this.resolveOwnerType(octokit, owner);
 
     try {
@@ -132,7 +143,11 @@ export class GhcrPackagesService {
         htmlUrl: v.html_url ?? '',
       }));
     } catch (err) {
-      this.mapGithubError(err, `list versions for ${owner}/${packageName}`);
+      this.mapGithubError(
+        err,
+        `list versions for ${owner}/${packageName}`,
+        credential,
+      );
     }
   }
 
@@ -142,7 +157,7 @@ export class GhcrPackagesService {
     packageName: string,
     versionId: number,
   ): Promise<void> {
-    const octokit = await this.getOctokitForGhcr(userId, owner);
+    const { octokit, credential } = await this.getOctokitForGhcr(userId, owner);
     const ownerType = await this.resolveOwnerType(octokit, owner);
 
     try {
@@ -169,6 +184,7 @@ export class GhcrPackagesService {
       this.mapGithubError(
         err,
         `delete version ${versionId} for ${owner}/${packageName}`,
+        credential,
       );
     }
   }
@@ -191,7 +207,11 @@ export class GhcrPackagesService {
     }
   }
 
-  private mapGithubError(err: any, context: string): never {
+  private mapGithubError(
+    err: any,
+    context: string,
+    credential: GithubCredential,
+  ): never {
     const status = err.status ?? err.response?.status;
     const message = err.message ?? 'Unknown GitHub API error';
 
@@ -208,9 +228,7 @@ export class GhcrPackagesService {
         );
       }
       case 401:
-        throw new UnauthorizedException(
-          'GitHub token is no longer valid. Please re-connect your GitHub account.',
-        );
+        throw githubCredentialRejected(credential);
       case 422:
         throw new BadRequestException(`${context}: ${message}`);
       default:
