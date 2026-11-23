@@ -619,6 +619,18 @@ describe('knowing your own edge', () => {
     expect(calls.map((c) => c.path)).not.toContain('/sandbox/limits');
   });
 
+  it('reads the empty answer a current instance gives the same way', async () => {
+    const calls: Call[] = [];
+    const { data } = await call(
+      'my_permissions',
+      {},
+      { ...paid, 'GET /sandbox/session': '' },
+      calls,
+    );
+    expect(String(data.trial)).toContain('not in a trial');
+    expect(calls.map((c) => c.path)).not.toContain('/sandbox/limits');
+  });
+
   it('reports the sections and which of them are read-only', async () => {
     const { data } = await call('my_permissions', {}, paid);
     expect(data.sections).toEqual({

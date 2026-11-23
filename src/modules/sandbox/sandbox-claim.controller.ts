@@ -52,21 +52,21 @@ export class SandboxClaimController {
   async keep(@Req() req: Request): Promise<SandboxSessionDto> {
     const user = req.user as AuthenticatedUser | undefined;
     if (user?.userId) await this.activity.touch(user.userId);
-    return this.session(req);
+    const session = await this.session(req);
+    if (!session) throw new NotFoundException('You are not a demo guest');
+    return session;
   }
 
   @Get('session')
   @ApiOperation({
     summary: 'Whether the caller is a demo guest, and the area they hold',
     description:
-      'Answers 404 to anyone who is not a demo guest. A guest who has only looked around gets hasArea: false; their first deploy takes an area.',
+      'Answers 200 with an empty body to anyone who is not a demo guest: every signed-in page asks, and not being a guest is an answer, not an error. A guest who has only looked around gets hasArea: false; their first deploy takes an area.',
   })
   @ApiResponse({ status: 200, type: SandboxSessionDto })
-  async session(@Req() req: Request): Promise<SandboxSessionDto> {
+  async session(@Req() req: Request): Promise<SandboxSessionDto | null> {
     const guest = (req as Request & SandboxGuestRequest)[SANDBOX_GUEST_REQUEST];
-    if (guest === undefined) {
-      throw new NotFoundException('You are not a demo guest');
-    }
+    if (guest === undefined) return null;
     const user = req.user as AuthenticatedUser | undefined;
     const tenant = user?.userId
       ? await this.reserve.findActiveForUser(user.userId)

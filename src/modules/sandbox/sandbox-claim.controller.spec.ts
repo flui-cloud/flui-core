@@ -77,10 +77,10 @@ describe('the area a guest holds', () => {
     );
   });
 
-  it('answers 404 to anyone who is not a demo guest', async () => {
+  it('answers nothing, not an error, to anyone who is not a demo guest', async () => {
     await expect(
       build({ expiresAt: new Date() }).session(req('u1', false)),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).resolves.toBeNull();
   });
 
   it('never exposes the namespace of the area', async () => {
@@ -115,6 +115,20 @@ describe("keeping a guest's applications", () => {
 
     expect(touch).toHaveBeenCalledWith('u1');
     expect(session.hasArea).toBe(true);
+  });
+
+  it('still refuses somebody who is not a demo guest', async () => {
+    const controller = new SandboxClaimController(
+      { findActiveForUser: async () => null } as never,
+      { origin: 'https://demo.flui.cloud' } as never,
+      loadSandboxConfig({}),
+      { touch: async () => undefined } as never,
+    );
+    const req = { user: { userId: 'u1' } } as unknown as Request;
+
+    await expect(controller.keep(req)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 
