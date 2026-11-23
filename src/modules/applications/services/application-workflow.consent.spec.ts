@@ -42,6 +42,8 @@ const build = (opts?: {
   refuseSecret?: string;
   /** The instance runs its own registry on this host. */
   registryHost?: string;
+  /** What the application already has stored for its Dockerfile marker. */
+  storedFluiManaged?: boolean;
 }): Harness => {
   const updates: Record<string, unknown>[] = [];
   const commits: { delivery?: string; workflowYaml: string }[] = [];
@@ -54,6 +56,7 @@ const build = (opts?: {
       id: 'app-1',
       slug: 'their-app',
       sourceConfig: { type: 'git_build', repositoryId: REPO_ID },
+      isFluiManaged: opts?.storedFluiManaged ?? false,
     }),
     update: async (_id: string, patch: Record<string, unknown>) => {
       updates.push(patch);
@@ -334,6 +337,27 @@ describe('committing on behalf of a guest', () => {
 });
 
 describe('committing for the owner of the repository', () => {
+  it('keeps the stored Flui-managed marker when the call does not name it', async () => {
+    const harness = build({ storedFluiManaged: true });
+    await harness.service.generateAndCommitWorkflowV3('app-1', 'u1', {
+      branch: 'main',
+    });
+    expect(
+      harness.updates.find((p) => 'isFluiManaged' in p)?.isFluiManaged,
+    ).toBe(true);
+  }, 15_000);
+
+  it('writes the marker the call names', async () => {
+    const harness = build({ storedFluiManaged: true });
+    await harness.service.generateAndCommitWorkflowV3('app-1', 'u1', {
+      branch: 'main',
+      isFluiManaged: false,
+    });
+    expect(
+      harness.updates.find((p) => 'isFluiManaged' in p)?.isFluiManaged,
+    ).toBe(false);
+  }, 15_000);
+
   it('still pushes, and still starts a build', async () => {
     const harness = build();
     const result = await harness.service.generateAndCommitWorkflowV3(

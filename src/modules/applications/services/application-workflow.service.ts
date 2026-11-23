@@ -64,6 +64,7 @@ export interface GenerateWorkflowDto {
 
 export interface GenerateWorkflowV3Dto {
   branch: string;
+  /** Omitted, the value already stored on the application is kept. */
   isFluiManaged?: boolean;
   force?: boolean;
   /** Dockerfile path relative to repo root (default: Dockerfile). */
@@ -662,7 +663,7 @@ export class ApplicationWorkflowService {
       webhookToken,
       subPath: dto.subPath,
       dockerfilePath: dto.dockerfilePath,
-      isFluiManaged: dto.isFluiManaged ?? false,
+      isFluiManaged: dto.isFluiManaged ?? app.isFluiManaged ?? false,
       buildStarted: !proposed,
       force: dto.force,
       imageRegistryHost: registry?.host ?? null,
