@@ -40,7 +40,7 @@
     "@aws-sdk/client-s3": "^3.1041.0",
     "@aws-sdk/s3-request-presigner": "^3.1041.0",
     "@flui-cloud/infra": "^0.6.4",
-    "@flui-cloud/spec": "^0.12.0",
+    "@flui-cloud/spec": "^0.13.0",
     "@inquirer/prompts": "^7.10.1",
     "@kubernetes/client-node": "^1.4.0",
     "@nestjs/axios": "^4.0.0",

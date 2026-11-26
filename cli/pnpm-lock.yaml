@@ -17,8 +17,8 @@ importers:
         specifier: ^0.6.4
         version: 0.6.4(@nestjs/common@11.1.28(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/config@4.0.4(@nestjs/common@11.1.28(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2))(@nestjs/swagger@11.4.5(@nestjs/common@11.1.28(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2))(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@flui-cloud/spec':
-        specifier: ^0.12.0
-        version: 0.12.0
+        specifier: ^0.13.0
+        version: 0.13.0
       '@inquirer/prompts':
         specifier: ^7.10.1
         version: 7.10.1(@types/node@20.19.25)
@@ -433,10 +433,10 @@ packages:
       reflect-metadata: '>=0.1'
       rxjs: '>=7'
 
-  '@flui-cloud/spec@0.12.0':
+  '@flui-cloud/spec@0.13.0':
     resolution:
       {
-        integrity: sha512-0OPU49trPl4Nf1ENO+PiT5NBDKqMx/iAfbFRm0UG4ib1YFoc7QpCtMLXgtzRyxRTP8DdaVmCAct42wO81S9n1g==,
+        integrity: sha512-qa0/+mxZBHGYi5CW5Xa1Z2mpADAw/uaGtQ2tz4ITE84BNSFk53HrMms3KjpMxL9UaqXGWfFyqJVEPutHAp3xlQ==,
       }
     hasBin: true
 
@@ -5119,7 +5119,7 @@ snapshots:
       - debug
       - supports-color
 
-  '@flui-cloud/spec@0.12.0':
+  '@flui-cloud/spec@0.13.0':
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)

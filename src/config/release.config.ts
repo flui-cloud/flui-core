@@ -104,7 +104,7 @@ export const KNOWLEDGE_SOURCES: KnowledgeSources = {
   docsRepo: 'dawit-io/flui-docs',
   docsRef: '005ab025eeee8285d4b6ea38009f47d28e6a5f6c',
   specRepo: 'flui-cloud/flui-spec',
-  specRef: 'v0.12.0',
+  specRef: 'v0.13.0',
 };
 
 /** Docker image tags to deploy. `useLatest` → all `latest`. */
