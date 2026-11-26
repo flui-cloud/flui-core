@@ -1,43 +1,39 @@
 generatedFrom:
-  dashboardCommit: fab5caf
-  coreCommit: 0dc5c07
-  verifiedOn: 2026-10-19
+  dashboardCommit: 150dac5
+  coreCommit: d2fa7fed
+  verifiedOn: 2026-11-26
 visibility_notes:
-  - text: "Each sidebar section is shown only when the user's permissions include its section key: Cluster needs 'clusters', Workloads needs 'workloads', Deploy needs 'deploy', and the Firewall group needs 'firewall'."
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.html:67'
-  - text: 'Section checks use canSee(section), which asks the permission service whether the section is in the list returned by /me/permissions.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:223'
-  - text: "Infrastructure entries (Compute, Costs, Virtual Networks, SSH Keys, Domains, Platform) each require the 'infrastructure' section; the Infrastructure section disappears when none is visible and the Firewall group is hidden too."
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar-nav.config.ts:40'
-  - text: "Management entries map to sections: Now to 'clusters', Providers, Image registry and GitHub Setup to 'providers', Backup and Migrations to 'backup', Mail to 'mail', Access to 'access', Projects to 'projects', Updates to 'infrastructure', Settings to 'settings'. 'How it is run' and 'Agents' have no section mapping, so they are shown whenever the demo fence admits them."
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar-nav.config.ts:5'
-  - text: 'SSH Keys, Platform, GitHub Setup and Image registry (FULL_ACCESS_ONLY_LABELS) are hidden when the user has their section in read-only mode.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar-nav.config.ts:19'
-  - text: 'The full-access-only rule is applied in shows(): an entry in FULL_ACCESS_ONLY_LABELS is kept only if the section is not read-only.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:232'
-  - text: 'On a demo instance, Topology, Scaling, SSH Keys, Platform, Image registry, GitHub Setup and Updates (READS_BY_LABEL) appear only if the demo fence lets the guest make the first read that page needs, so the menu never leads into a refusal. Outside a demo every read is allowed.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar-nav.config.ts:30'
-  - text: 'The demo-fence check (admitted) is applied to Topology, the Cluster entries and to Infrastructure and Management entries; sandbox.allows() returns true when not in a sandbox.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:227'
-  - text: "The Workloads System entry is added only after the user clicks 'Show system' under the Workloads group; the choice is remembered in the browser."
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:348'
-  - text: "The 'Show system' / 'Hide system' button is rendered only while the sidebar and the Workloads group are expanded."
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.html:103'
-  - text: "Workloads labels carry a count when non-zero, for example 'Applications (4)'; Projects shows the number of projects."
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:323'
-  - text: 'When an application is opened, the sidebar highlights the list it belongs to (Applications, Data or System) rather than always Applications.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:307'
-  - text: 'The user menu (sidebar footer) has Account, Settings and Log out; Account is hidden for anonymous demo visitors.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.html:225'
-  - text: 'The sidebar has a search box; a search hides whole sections with no matching entry. Entries can be pinned.'
-    source: 'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.html:33'
+  - text: 'The console menu has six groups: an unnamed first group (Overview, Topology), Workloads, Delivery, Infrastructure, Operations and Administration. A group disappears when none of its entries is visible.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.config.ts:22'
+  - text: "An entry with a section key is shown only when /me/permissions includes that section: Image registry and Providers and GitHub app need 'providers'; Compute, Networks, Domains and DNS, SSH keys, Platform, Costs and Updates need 'infrastructure'; Live needs 'clusters'; Backups and Migrations need 'backup'; Mail needs 'mail'; Access needs 'access'; Settings needs 'settings'. Overview, Topology, the Workloads entries, Deploy, App catalog, Repositories, Templates, Clusters, Scaling, Firewall and Agents have no section key."
+    source: 'flui-dashboard/src/app/layout/console/console-nav.ts:92'
+  - text: 'Image registry, SSH keys, Platform and GitHub app (fullAccessOnly) are hidden when the user has their section in read-only mode.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.config.ts:112'
+  - text: 'On a demo instance, Topology, Image registry, Scaling, SSH keys, Platform, GitHub app and Updates appear only if the demo fence lets the guest make the first read that page needs, so the menu never leads into a refusal. Outside a demo every read is allowed.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.ts:94'
+  - text: "Workloads > System apps is shown only after the user ticks 'Show system apps' in the user menu; the choice is remembered in the browser."
+    source: 'flui-dashboard/src/app/layout/console/console-nav.config.ts:71'
+  - text: 'Applications, Data stores, System apps and Projects show a count next to the label when it is not zero.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.ts:36'
+  - text: 'When an application is opened, the menu highlights the list it belongs to (Applications, Data stores or System apps) rather than always Applications.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.ts:46'
+  - text: 'Updates shows the available version next to its label when a platform update is available.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.config.ts:276'
+  - text: 'The top bar has a search field that opens a command palette listing every visible menu entry by name and keywords.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.ts:74'
+  - text: 'The help menu (question mark in the top bar) has How Flui is run, a link to the source code and the running Flui version.'
+    source: 'flui-dashboard/src/app/layout/console/console-topbar.ts:74'
+  - text: 'The user menu (name in the top bar) has Account, Settings, Show system apps, Mask sensitive values and Log out; Account is hidden for anonymous demo visitors.'
+    source: 'flui-dashboard/src/app/layout/console/console-topbar.ts:99'
+  - text: 'Projects is managed from Workloads > Projects; the full project management page (/management/projects) is not in the menu and is reached from the Manage all projects link there.'
+    source: 'flui-dashboard/src/app/layout/console/console-nav.config.ts:64'
 entries:
   - id: home
     kind: page
-    menu: ['Home']
+    menu: ['Overview']
     route: /dashboard
-    title: 'Home'
-    shows: 'The installation at a glance: a status line (API online, providers, clusters, running apps, operations in progress), cluster metric tiles, the Clusters table, Needs you, Agent, Backups, Certificates & DNS, Recent cluster activity and Workloads cards. On a fresh installation it leads with the DNS not configured first step; a demo guest sees a dedicated guest home instead.'
+    title: 'Overview'
+    shows: 'The installation at a glance: a health strip, Open issues, Resource utilization, the Clusters table, Backups, Endpoints and certificates and Agents panels. On a fresh installation it leads with the DNS not configured first step; a demo guest sees a dedicated guest home instead.'
     actions:
       [
         'Pick the metrics window',
@@ -58,7 +54,7 @@ entries:
         'flui-dashboard/src/app/features/components/dashboard/dashboard-needs-you.component.ts:74',
         'flui-dashboard/src/app/features/components/dashboard/dashboard-certs.component.ts:65',
       ]
-    notes: 'Route title is "Dashboard" but the page heading is "Home". Deploy button only when the user can deploy; demo guests get guest-home.'
+    notes: 'Menu entry and page heading are "Overview" (route /dashboard). Deploy button only when the user can deploy; demo guests get guest-home.'
 
   - id: topology
     kind: page
@@ -86,7 +82,7 @@ entries:
 
   - id: cluster-clusters
     kind: page
-    menu: ['Cluster', 'Clusters']
+    menu: ['Infrastructure', 'Clusters']
     route: /cluster
     title: 'Clusters'
     shows: 'Cards for every cluster with status, provider, region, node count, auto-scaling badge, version and creation date. Search and filter by provider, status and region.'
@@ -359,7 +355,7 @@ entries:
 
   - id: scaling
     kind: page
-    menu: ['Cluster', 'Scaling']
+    menu: ['Infrastructure', 'Scaling']
     route: /scaling
     title: 'Scaling'
     shows: 'Every cluster in the installation, whether or not it can scale itself: situation cards (need a person, open alarms, billed to Flui) and a table with who can add a node, nodes and spend per cluster.'
@@ -476,7 +472,7 @@ entries:
     notes: 'Opening a row goes to the application recap (/apps/recap/:id). Empty state: "No applications yet". /apps/tools redirects here with ?type=tool.'
   - id: apps-data
     kind: page
-    menu: ['Workloads', 'Data']
+    menu: ['Workloads', 'Data stores']
     route: /apps/data
     title: 'Data'
     shows: 'The same list as Applications, restricted to data stores: databases, caches, queues and object stores. Data stores bundled inside a multi-component app are also listed here on their own, and the name column is headed "Data store".'
@@ -498,7 +494,7 @@ entries:
     notes: 'Same component as Applications with list ''data''. A bundled data store opens its detail page directly instead of the recap. The catalog link from Add carries list=data. /apps/databases redirects here. Empty state: "No data stores yet".'
   - id: apps-system
     kind: page
-    menu: ['Workloads', 'System']
+    menu: ['Workloads', 'System apps']
     route: /apps/system
     title: 'System'
     shows: "The same list restricted to Flui's own system applications, with no Add button."
@@ -514,9 +510,9 @@ entries:
       [
         'flui-dashboard/src/app/features/components/application/applications-list.component.ts:152',
         'flui-dashboard/src/app/features/components/application/applications-list-kind.ts:28',
-        'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.ts:348',
+        'flui-dashboard/src/app/layout/console/console-nav.config.ts:71',
       ]
-    notes: 'Appears in the sidebar only after the "Show system" toggle. Route title is "System Apps", page heading "System". Empty state: "No system applications found".'
+    notes: 'Appears in the menu only after Show system apps is ticked in the user menu. Route title is "System Apps", page heading "System". Empty state: "No system applications found".'
   - id: app-detail
     kind: subpage
     menu: null
@@ -1021,7 +1017,7 @@ entries:
     notes: "The console is chosen by the store's engine family. Per the Access tab copy, most are read-only by default; the storage browser can upload, download, delete and share files, the messaging console can publish and peek messages, and the Kafka and Meilisearch consoles include an AI copilot. Console pages themselves were not read."
   - id: deploy-catalog
     kind: page
-    menu: ['Deploy', 'App Catalog']
+    menu: ['Delivery', 'App catalog']
     route: /apps/catalog
     title: 'App Catalog'
     shows: "A searchable marketplace of ready-made open-source apps, grouped into Data, Applications, Tools and System, with category chips and tag filters. Each card opens the app's detail page."
@@ -1061,7 +1057,7 @@ entries:
 
   - id: deploy-repositories
     kind: page
-    menu: ['Deploy', 'Repositories']
+    menu: ['Delivery', 'Repositories']
     route: /apps/repositories
     title: 'Git Repositories'
     shows: 'The GitHub connection state and the repositories imported into Flui, with counts of total, connected and auto-deploy enabled repositories. Each repository card shows its branch, language, detected framework and badges such as Webhook Active or Auto-deploy.'
@@ -1124,7 +1120,7 @@ entries:
 
   - id: deploy-templates
     kind: page
-    menu: ['Deploy', 'Templates']
+    menu: ['Delivery', 'Templates']
     route: /apps/templates
     title: 'Flui Templates'
     shows: 'Framework templates with a production-ready Dockerfile, each card showing its port, health check path and build tool. Filter by Frontend, Backend or Generic.'
@@ -1148,7 +1144,7 @@ entries:
 
   - id: deploy-new
     kind: page
-    menu: ['Deploy', 'Deploy New']
+    menu: ['Delivery', 'Deploy']
     route: /apps/deploy/new
     title: 'Deploy New Application'
     shows: 'A step-by-step wizard that starts by choosing a source: a Flui template, a Docker image, an existing repository, or the Marketplace. Later steps cover the image or repository, environment variables and resources, the cluster, exposure and domain, and a final review.'
@@ -1197,7 +1193,7 @@ entries:
 
   - id: infra-costs
     kind: page
-    menu: ['Infrastructure', 'Costs']
+    menu: ['Operations', 'Costs']
     route: /infrastructure/costs
     title: 'Costs'
     shows: 'What the machines and volumes of your clusters cost month by month, deleted clusters included: spent this month, expected by month end and last month, a per-provider table, and a per-cluster breakdown for each provider. Amounts exclude VAT.'
@@ -1212,7 +1208,7 @@ entries:
 
   - id: infra-vnet
     kind: page
-    menu: ['Infrastructure', 'Virtual Networks']
+    menu: ['Infrastructure', 'Networks']
     route: /infrastructure/vnet
     title: 'Virtual Networks'
     shows: 'The Flui network card (which connects clusters on another provider to the control cluster) above a list of private networks with their provider, IP range, subnets and attached servers, plus totals.'
@@ -1236,7 +1232,7 @@ entries:
 
   - id: infra-ssh-keys
     kind: page
-    menu: ['Infrastructure', 'SSH Keys']
+    menu: ['Infrastructure', 'SSH keys']
     route: /infrastructure/keys
     title: 'SSH Keys'
     shows: 'The SSH keys used for server access, with name, fingerprint, the providers each key is synced to, and totals for total, active, recent and auto-generated keys.'
@@ -1260,7 +1256,7 @@ entries:
 
   - id: infra-domains
     kind: page
-    menu: ['Infrastructure', 'Domains']
+    menu: ['Infrastructure', 'Domains and DNS']
     route: /infrastructure/domains
     title: 'DNS Zones'
     shows: 'Three tabs. Registered Zones lists your DNS zones with provider, redundancy and the clusters using each one. Certificate Issuers shows, per cluster, the standard (HTTP-01) and wildcard certificate issuers. Internal Hosting shows, per cluster, whether internal apps reachable only through the dashboard are available and which requirements are met.'
@@ -1335,7 +1331,7 @@ entries:
 
   - id: firewall-clusters
     kind: page
-    menu: ['Infrastructure', 'Firewall', 'Cluster Firewalls']
+    menu: ['Infrastructure', 'Firewall']
     route: /infrastructure/firewall/clusters
     title: 'Cluster Firewalls'
     shows: 'Firewall rules for your clusters: one card per cluster with sync status, coverage, drift, node readiness, rule count and last reconciliation, plus totals for in sync, in progress, out of sync and coverage gaps.'
@@ -1359,7 +1355,7 @@ entries:
     notes: "Reconcile shows only on drift or error and, like Debug on provider, is read-only gated. The env firewall commands cover only the control cluster firewall. cluster_firewall_enable seeds or re-applies a cluster's firewall and asks a person first. The host firewall (flui cluster host-firewall, cluster_host_firewall_set) is not on this page."
   - id: mgmt-now
     kind: page
-    menu: ['Management', 'Now']
+    menu: ['Operations', 'Live']
     route: /management/now
     title: 'Now'
     shows: "A live screen of what runs out first under a crowd: firing alerts, requests at each cluster (requests per second, surges, rate-limited and server errors over 10 minutes), each node's CPU, memory, link and month-at-this-pace, platform components with restarts in the last hour, and image registry traffic for the last hour. On a demo installation it also shows demo spaces in use, ready, waiting and turned away."
@@ -1378,7 +1374,7 @@ entries:
 
   - id: mgmt-providers
     kind: page
-    menu: ['Management', 'Providers']
+    menu: ['Administration', 'Providers']
     route: /management/providers
     title: 'Cloud providers'
     shows: 'The cloud accounts Flui creates your machines on, with summary tiles and a searchable list filterable by status (connected, not connected, needs attention, disabled) and sign-in type. Choosing a provider opens a configuration wizard to connect it.'
@@ -1428,7 +1424,7 @@ entries:
 
   - id: mgmt-backup
     kind: page
-    menu: ['Management', 'Backup']
+    menu: ['Operations', 'Backups']
     route: /management/backup
     title: 'Backup & Restore'
     shows: 'What you can protect (a cluster, a database, Flui itself), backups that need attention, a protection card per cluster, overview counts (destinations, policies, total storage, restore jobs), the platform backup card for Flui itself, and links to destinations, policies, jobs and restores.'
@@ -1500,7 +1496,7 @@ entries:
 
   - id: mgmt-registry
     kind: page
-    menu: ['Management', 'Image registry']
+    menu: ['Delivery', 'Image registry']
     route: /management/registry
     title: 'Image registry'
     shows: 'Where the images Flui builds for your applications are kept: the storage location, space in use with a space alert, traffic (pulls, pushes, data out and in) over selectable windows, and the largest applications. When builds still push to GitHub Container Registry, it offers to switch to the Flui registry on a volume or a bucket.'
@@ -1537,7 +1533,7 @@ entries:
 
   - id: mgmt-migrations
     kind: page
-    menu: ['Management', 'Migrations']
+    menu: ['Operations', 'Migrations']
     route: /management/migrations
     title: 'Migrations'
     shows: 'Moves of workloads, managed databases and full apps across clusters, listed with type, status, source and target, cutover and time, plus next steps and errors per row.'
@@ -1586,7 +1582,7 @@ entries:
 
   - id: mgmt-mail
     kind: page
-    menu: ['Management', 'Mail']
+    menu: ['Operations', 'Mail']
     route: /management/mail
     title: 'Mail'
     shows: 'The state of sending for a chosen time window: any incident, key figures, volume by outcome, sending domains and senders with sent and delivered counts. Section tabs lead to Activity, Domains, Suppressions, Providers and Setup.'
@@ -1629,7 +1625,7 @@ entries:
 
   - id: mgmt-github-setup
     kind: page
-    menu: ['Management', 'GitHub Setup']
+    menu: ['Administration', 'GitHub app']
     route: /apps/repositories/github-setup
     title: 'Setup GitHub Integration'
     shows: "A one-time wizard (Choose Method, Configure, Done) for how Flui connects to GitHub: a Personal Access Token pasted by each person, or a GitHub App created on GitHub with one click (or an existing App's credentials). If GitHub is already configured it shows the active method and a Reset button."
@@ -1660,7 +1656,7 @@ entries:
 
   - id: mgmt-access
     kind: page
-    menu: ['Management', 'Access']
+    menu: ['Administration', 'Access']
     route: /management/access
     title: 'Access'
     shows: 'Who can do what, on which resources, deny by default. Tabs: Grants (grants made in Flui with role, what, applies to and end date), People, Groups, Roles, Temporary access and Activity.'
@@ -1706,7 +1702,6 @@ entries:
 
   - id: mgmt-projects
     kind: page
-    menu: ['Management', 'Projects']
     route: /management/projects
     title: 'Projects'
     shows: 'Where applications live: each project with its color, short name, app count, a personal badge for personal projects and its apps. Apps of one project share their building blocks.'
@@ -1728,7 +1723,7 @@ entries:
 
   - id: mgmt-updates
     kind: page
-    menu: ['Management', 'Updates']
+    menu: ['Administration', 'Updates']
     route: /management/updates
     title: 'Updates'
     shows: 'The Flui release running on this installation (API, dashboard and authorization service), whether an update is available with its release notes, the progress of an update in flight, details, and update history.'
@@ -1758,7 +1753,7 @@ entries:
 
   - id: mgmt-operating-context
     kind: page
-    menu: ['Management', 'How it is run']
+    menu: ['Help menu', 'How Flui is run']
     route: /management/operating-context
     title: 'How this installation is run'
     shows: 'Notes written by the people who run this installation about local conventions, marked as advice and not permissions, with the Flui network status line. Notes are grouped into those asking to be re-read, where two notes disagree, what still holds, and retired notes, and you can focus on what reaches a given application or cluster.'
@@ -1782,7 +1777,7 @@ entries:
 
   - id: mgmt-agents
     kind: page
-    menu: ['Management', 'Agents']
+    menu: ['Administration', 'Agents']
     route: /agents
     title: 'Agents'
     shows: 'What your agents are asking to do, what they may already do, and what they have done: a Connect an agent panel, requests waiting on you, permissions granted permanently, and an activity log. An agent can never do more than you can.'
@@ -1807,7 +1802,7 @@ entries:
 
   - id: mgmt-settings
     kind: page
-    menu: ['Management', 'Settings']
+    menu: ['Administration', 'Settings']
     route: /settings
     title: 'Settings'
     shows: 'Your settings in tabs: Profile, Security, Agent keys, Auth Proxy (protect internal apps with sign-in per cluster), LLM Connections (bring your own key for an OpenAI-compatible model, with usage) and Demo sign-in (GitHub or Google sign-in for demo guests, with visitors).'
@@ -1838,7 +1833,7 @@ entries:
         'flui-dashboard/src/app/app.routes.ts:141',
         'flui-dashboard/src/app/features/components/settings/settings.component.ts:147',
         'flui-dashboard/src/app/features/components/settings/settings.component.ts:228',
-        'flui-dashboard/src/app/layout/components/sidebar/sidebar.component.html:231',
+        'flui-dashboard/src/app/layout/console/console-topbar.ts:99',
       ]
     notes: 'Also reachable from the user menu. Security shows only with local sign-in, Auth Proxy only for admins, Demo sign-in only on a demo installation for people with sandbox:operate. Agent key and auth proxy child components were not read in depth.'
 
@@ -1874,4 +1869,4 @@ entries:
         'flui-dashboard/src/app/features/components/account/account-security.component.ts:187',
         'flui-dashboard/src/app/features/components/account/account-security.component.ts:210',
       ]
-    notes: 'Hidden from the user menu for demo visitors (sidebar.component.html:225); a visitor opening it sees that the demo is read-only. flui account password, totp, remove-passkey and unlink only point to this page.'
+    notes: 'Hidden from the user menu for demo visitors (console-topbar.ts:99); a visitor opening it sees that the demo is read-only. flui account password, totp, remove-passkey and unlink only point to this page.'

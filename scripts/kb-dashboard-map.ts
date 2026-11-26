@@ -4,9 +4,9 @@
  * The curated map (knowledge/sources/authored/dashboard-map.yaml) says, per
  * dashboard page, where it sits in the menu, what it shows, what you can do and
  * the equivalent CLI command and MCP tool. This script is its drift guard and
- * renderer: it fails when a sidebar link of the dashboard checkout has no entry,
+ * renderer: it fails when a menu link of the dashboard checkout has no entry,
  * when an entry names a CLI command or MCP tool that does not exist, or when an
- * entry points at a route the sidebar no longer has; otherwise it writes
+ * entry points at a route the menu no longer has; otherwise it writes
  * generated/dashboard-map.generated.md, one `##` block per page.
  *
  * Part of `pnpm kb`; kb-build compiles the output as the
@@ -58,13 +58,12 @@ function dashboardDir(): string {
   return dir;
 }
 
-function sidebarLinks(dashboard: string): Set<string> {
+function menuLinks(dashboard: string): Set<string> {
   const app = path.join(dashboard, 'src/app');
   const files = [
-    'layout/components/sidebar/sidebar-nav.config.ts',
-    'layout/components/sidebar/sidebar.component.ts',
+    'layout/console/console-nav.config.ts',
+    'layout/console/console-topbar.ts',
     'features/model/workload-list.ts',
-    'layout/components/sidebar/sidebar.component.html',
   ];
   const links = new Set<string>();
   for (const rel of files) {
@@ -125,14 +124,14 @@ function validate(
   const problems: string[] = [];
   const routes = new Set(map.entries.map((e) => e.route));
   for (const link of links) {
-    if (!routes.has(link)) problems.push(`sidebar link without entry: ${link}`);
+    if (!routes.has(link)) problems.push(`menu link without entry: ${link}`);
   }
   const ids = new Set<string>();
   for (const e of map.entries) {
     if (ids.has(e.id)) problems.push(`duplicate id: ${e.id}`);
     ids.add(e.id);
     if (e.kind === 'page' && e.menu && !links.has(e.route)) {
-      problems.push(`${e.id}: route ${e.route} is not a sidebar link`);
+      problems.push(`${e.id}: route ${e.route} is not a menu link`);
     }
     for (const c of e.cli ?? []) {
       if (!cli.has(commandOf(c))) problems.push(`${e.id}: unknown CLI "${c}"`);
@@ -152,7 +151,7 @@ function render(map: DashboardMap): string {
     '---',
     '',
     'Each block below is one page of the dashboard. "Menu" is the path in the',
-    'sidebar. "CLI" and "Agent tool" are the equivalent command and MCP tool;',
+    'menu. "CLI" and "Agent tool" are the equivalent command and MCP tool;',
     'none listed means the page has no direct equivalent.',
   ];
   const pages = map.entries.filter((e) => e.kind === 'page');
@@ -181,7 +180,7 @@ function main(): void {
   const map = yaml.load(fs.readFileSync(MAP, 'utf8')) as DashboardMap;
   const problems = validate(
     map,
-    sidebarLinks(dashboardDir()),
+    menuLinks(dashboardDir()),
     cliCommandIds(),
     mcpToolNames(),
   );
