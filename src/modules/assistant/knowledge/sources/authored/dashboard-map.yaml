@@ -25,7 +25,7 @@ visibility_notes:
     source: 'flui-dashboard/src/app/layout/console/console-topbar.ts:74'
   - text: 'The user menu (name in the top bar) has Account, Settings, Show system apps, Mask sensitive values and Log out; Account is hidden for anonymous demo visitors.'
     source: 'flui-dashboard/src/app/layout/console/console-topbar.ts:99'
-  - text: 'Projects is managed from Workloads > Projects; the full project management page (/management/projects) is not in the menu and is reached from the Manage all projects link there.'
+  - text: 'Projects is managed from Workloads > Projects; the full project management page (/management/projects) is not in the menu and is reached from the Manage projects button there.'
     source: 'flui-dashboard/src/app/layout/console/console-nav.config.ts:64'
 entries:
   - id: home
@@ -61,84 +61,90 @@ entries:
     menu: ['Topology']
     route: /topology
     title: 'Topology'
-    shows: "A live map of clusters, servers and apps, viewed as Services or Infrastructure and shown as a map or a list, with an inspector panel for the selected item. From an item you can drill into a cluster's capacity or an app's request path."
+    shows: "A live map of clusters, servers and apps with cluster, server and app counts in the header, viewed as Services or Infrastructure and shown as a Map or a List, with an inspector panel for the selected item. From an item you can drill into a cluster's capacity or an app's request path."
     actions:
       [
-        'Filter by project',
-        'Toggle system apps',
-        'Switch view (Services or Infrastructure)',
-        'Switch between map and list',
-        'Export the map as an image',
+        'Filter by project (All projects)',
+        'Toggle System apps',
+        'Switch View (Services or Infrastructure)',
+        'Switch Show as (Map or List)',
+        'Export image',
       ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:54',
-        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:83',
-        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:174',
+        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:66',
+        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:102',
+        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:122',
+        'flui-dashboard/src/app/features/components/topology/topology-page.component.ts:150',
       ]
-    notes: 'System apps toggle is described as shown to whoever sees every cluster.'
+    notes: 'The System apps chip shows the apps Flui itself runs; its tooltip says they are shown to whoever sees every cluster. Export image works only while the map is open, not the list.'
 
   - id: cluster-clusters
     kind: page
     menu: ['Infrastructure', 'Clusters']
     route: /cluster
     title: 'Clusters'
-    shows: 'Cards for every cluster with status, provider, region, node count, auto-scaling badge, version and creation date. Search and filter by provider, status and region.'
+    shows: 'A table of every cluster with the count in the heading (Clusters (N)): Cluster, Status, Provider, Region, Nodes, Version and Created. The control and observability clusters carry a tag. A toolbar searches by name and filters by provider, status and region.'
     actions:
       [
-        'Create a cluster',
+        'Create cluster',
         'Search and filter clusters',
-        'View a cluster',
-        'Delete a cluster (optionally force delete)',
+        'Open a cluster',
+        'Cluster actions > Delete cluster (optionally force delete)',
         'Refresh',
       ]
     cli: ['flui cluster list', 'flui cluster create', 'flui cluster destroy']
     mcp: ['cluster_list', 'cluster_create']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:85',
-        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:108',
-        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:306',
-        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:391',
+        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:75',
+        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:90',
+        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:107',
+        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:197',
+        'flui-dashboard/src/app/features/components/cluster/cluster-list.component.ts:245',
       ]
-    notes: 'Delete needs the cluster:destroy permission; the control cluster can only be managed via CLI. Create is blocked in read-only sections.'
+    notes: 'The row Actions menu needs the cluster:destroy permission and is hidden for the control and observability clusters, which are managed from the CLI, and for a cluster being deleted. Create cluster is blocked in read-only sections.'
 
   - id: cluster-new
     kind: subpage
     menu: null
     route: /cluster/new
-    title: 'Create Cluster'
-    shows: 'The Create Your Cluster wizard: Infrastructure, Resources, SSH Keys, Network, Endpoint, Firewall, then Review & Create.'
+    title: 'Create cluster'
+    shows: 'A step-by-step wizard: Infrastructure (name and provider), Resources (region, node size and scaling), SSH key, Network, Endpoint, Firewall, then Review.'
     actions:
       [
-        'Choose name, provider and region',
-        'Pick the node size',
-        'Configure network, endpoint and firewall',
-        'Create the cluster',
+        'Choose name and provider',
+        'Pick region, node size and scaling',
+        'Configure SSH key, network, endpoint and firewall',
+        'Previous / Next between steps',
+        'Create cluster',
+        'Cancel',
       ]
     cli: ['flui cluster create', 'flui server-types list']
     mcp: ['cluster_create', 'cluster_provider_check', 'server_type_list']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-creation-wizard.component.ts:149',
-        'flui-dashboard/src/app/features/components/cluster/cluster-creation-wizard.component.ts:1555',
+        'flui-dashboard/src/app/features/components/cluster/cluster-creation-wizard.component.html:2',
+        'flui-dashboard/src/app/features/components/cluster/cluster-create-steps.ts:27',
+        'flui-dashboard/src/app/features/components/cluster/cluster-creation-wizard.component.html:192',
       ]
 
   - id: cluster-detail-overview
     kind: subpage
     menu: null
     route: /cluster/:id/overview
-    title: 'Cluster Details'
-    shows: 'Cluster summary: average CPU and memory, nodes, firewall, backups, outbound ports, DNS zone, variables, platform components, network, auth proxy, cluster info (provider, region, K3s version, auto-scaling, ID) and the maintenance window. The cluster header offers refresh, copy ID, stop, start and delete.'
+    title: "The cluster's name"
+    shows: 'The cluster header (status, ID, provider and region) above a section menu (Overview, then Operate, Capacity, Network and Configure groups). Overview shows the Details, Health (average CPU and memory), High availability, Nodes, Firewall, Backups, Outbound ports, DNS zone, Variables, Platform components, Network, Auth proxy and Maintenance window panels.'
     actions:
       [
-        'Stop or start the cluster',
-        'Delete the cluster',
+        'Refresh',
+        'Stop or Start the cluster',
+        'Actions > Delete cluster',
         'Enable backups',
-        'Attach a VNet',
-        'Edit the maintenance window',
+        'Attach VNet',
+        'Set a window, Change or Remove the maintenance window',
       ]
     cli:
       [
@@ -149,25 +155,32 @@ entries:
     mcp: ['cluster_power', 'cluster_maintenance', 'cluster_maintenance_set']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-dashboard.component.ts:196',
-        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:139',
-        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:308',
-        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:390',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dashboard.component.ts:89',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dashboard.component.ts:117',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dashboard.component.ts:149',
+        'flui-dashboard/src/app/features/components/cluster/cluster-detail-sections.ts:9',
+        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:16',
+        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:112',
+        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:258',
+        'flui-dashboard/src/app/features/components/maintenance/cluster-maintenance-card.component.ts:31',
       ]
-    notes: 'Stop/start/delete hidden in read-only mode; delete needs cluster:destroy; disabled for the control cluster (CLI only). Some tabs are hidden for demo guests.'
+    notes: 'Stop, Start and Actions are hidden in read-only mode; Delete cluster needs cluster:destroy and is disabled for the control cluster (CLI only); the maintenance window buttons need cluster:manage. For demo guests the sections whose first read is refused are hidden, the Firewall, Backups, Outbound ports, Variables, Platform components, Network, Auth proxy and Maintenance window panels are not shown, and Storage, Scaling, Firewall, DNS, Variables, Pricing and Auth proxy are look-only.'
 
   - id: cluster-detail-monitoring
     kind: subpage
     menu: null
     route: /cluster/:id/monitoring
     title: 'Monitoring'
-    shows: 'Cluster metrics summary and charts over a chosen range, plus node and app tables.'
-    actions: ['Pick a time range', 'Refresh or retry']
+    shows: 'Live cluster metrics refreshed every 5 seconds: a summary, History charts (CPU, Memory, Disk, Network) over the chosen range, the Nodes table and What is using the cluster (per application CPU, memory, replicas and restarts).'
+    actions: ['Pick a Time range (1h, 3h, 6h, 24h)', 'Refresh or Retry']
     cli: []
     mcp: ['cluster_resources']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-monitoring-tab.component.html:5',
+        'flui-dashboard/src/app/features/components/cluster/cluster-monitoring-tab.component.html:11',
+        'flui-dashboard/src/app/features/components/cluster/cluster-metrics-grid.component.ts:30',
+        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-table.component.ts:27',
+        'flui-dashboard/src/app/features/components/cluster/cluster-apps-table.component.ts:22',
       ]
 
   - id: cluster-detail-network
@@ -175,67 +188,88 @@ entries:
     menu: null
     route: /cluster/:id/network
     title: 'Network'
-    shows: "The cluster's VNet and its subnets, or the registered private network for self-hosted clusters."
-    actions: ['Manage VNets', 'Attach a VNet', 'Register a private network']
+    shows: "The cluster's Private network (name, IP range, status, subnets) and its Subnets table; for self-hosted clusters, the registered private network the nodes already share."
+    actions:
+      [
+        'Manage networks',
+        'Attach network',
+        'Register private network (self-hosted)',
+      ]
     cli: ['flui network list']
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:44',
-        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:147',
-        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:166',
+        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:56',
+        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:59',
+        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:87',
+        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:113',
+        'flui-dashboard/src/app/features/components/cluster/cluster-network-tab.component.ts:123',
       ]
 
   - id: cluster-detail-storage
     kind: subpage
     menu: null
     route: /cluster/:id/storage
-    title: 'Cluster storage'
-    shows: 'The shared disk on the master node: backing volume, per-namespace breakdown, NFS configuration, application snapshots and volumes left behind by removed apps.'
-    actions: ['Refresh', 'Remove a leftover volume']
+    title: 'Storage'
+    shows: 'Cluster storage (the shared disk on the master node, its per-namespace breakdown and NFS configuration), Application snapshots in this cluster, Replicated volumes, Space on the nodes, Where your apps store data, and Volumes with no application left behind by removed apps.'
+    actions:
+      [
+        'Refresh',
+        'Enable replicated volumes',
+        'Delete a volume with no application',
+      ]
     cli: ['flui cluster volumes']
     mcp: ['cluster_storage_status', 'cluster_orphaned_volumes']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-storage-tab.component.ts:99',
-        'flui-dashboard/src/app/features/components/cluster/cluster-storage-tab.component.ts:418',
-        'flui-dashboard/src/app/features/components/cluster/cluster-orphaned-volumes.component.ts:92',
+        'flui-dashboard/src/app/features/components/cluster/cluster-storage-tab.component.ts:49',
+        'flui-dashboard/src/app/features/components/cluster/cluster-storage-tab.component.ts:149',
+        'flui-dashboard/src/app/features/components/cluster/cluster-storage-tab.component.ts:210',
+        'flui-dashboard/src/app/features/components/cluster/cluster-replicated-volumes-card.component.ts:22',
+        'flui-dashboard/src/app/features/components/cluster/cluster-node-disks-card.component.ts:15',
+        'flui-dashboard/src/app/features/components/cluster/storage-classes-panel.ts:12',
+        'flui-dashboard/src/app/features/components/cluster/cluster-orphaned-volumes.component.ts:36',
+        'flui-dashboard/src/app/features/components/cluster/cluster-orphaned-volumes.component.ts:106',
       ]
-    notes: 'Removing a leftover volume needs cluster:manage.'
+    notes: 'Deleting a leftover volume needs cluster:manage.'
 
   - id: cluster-detail-nodes
     kind: subpage
     menu: null
     route: /cluster/:id/nodes
     title: 'Nodes'
-    shows: "The cluster's nodes; on provider clusters nodes change on the Scaling tab, on self-hosted clusters you connect and remove them here."
+    shows: "The cluster's Nodes table: Name, Role, State, Size, CPU, Memory and IP address. On provider clusters nodes change on the Scaling tab; on self-hosted clusters you connect and remove them here."
     actions:
       [
         'Refresh',
-        'Connect a node (self-hosted)',
-        'Remove a worker (self-hosted)',
+        'Connect node (self-hosted)',
         'Change nodes on the Scaling tab',
+        'Row actions: View details, Resize, Remove worker (self-hosted)',
       ]
     cli: ['flui node list', 'flui node connect', 'flui node remove']
     mcp: ['cluster_node_list', 'cluster_node_remove']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:70',
-        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:85',
-        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:137',
+        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:48',
+        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:72',
+        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:82',
+        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-tab.component.ts:111',
+        'flui-dashboard/src/app/features/components/cluster/cluster-nodes-rows.ts:99',
       ]
+    notes: 'Resize is offered only on provider workload clusters; Remove worker only on self-hosted clusters and never for the master. View details opens the server under Infrastructure > Compute.'
 
   - id: cluster-detail-scaling
     kind: subpage
     menu: null
     route: /cluster/:id/scaling
     title: 'Scaling'
-    shows: "The cluster's scaling at a glance: Nodes, Pressure, Waiting and Spend tiles, How this cluster grows, and What Flui decided."
+    shows: "The cluster's scaling at a glance: a Current state panel with Nodes, Pressure, Waiting and Spend tiles, How this cluster grows, and What Flui decided."
     actions:
       [
-        'Add or remove a node',
-        'Set up or edit scaling',
-        'Edit node limits (floor and ceiling)',
+        'One node more or One node fewer, then confirm',
+        'Set up scaling',
+        'Edit limits (Node limits: floor and ceiling)',
+        'Edit the scaling group',
       ]
     cli:
       [
@@ -254,133 +288,165 @@ entries:
     sources:
       [
         'flui-dashboard/src/app/features/components/cluster/cluster-scaling-tab.component.ts:61',
-        'flui-dashboard/src/app/features/components/cluster/scaling-fleet-tile.component.ts:27',
+        'flui-dashboard/src/app/features/components/cluster/scaling-fleet-tile.component.ts:41',
+        'flui-dashboard/src/app/features/components/cluster/scaling-growth-card.component.ts:13',
         'flui-dashboard/src/app/features/components/cluster/scaling-growth-card.component.ts:23',
         'flui-dashboard/src/app/features/components/cluster/scaling-limits-dialog.component.ts:40',
+        'flui-dashboard/src/app/features/components/cluster/scaling-decisions-table.component.ts:28',
       ]
-    notes: 'The old /cluster/:id/autoscaling route redirects here.'
+    notes: 'Set up scaling and Edit limits appear while the cluster has no scaling group; once it has one, the button is Edit. The old /cluster/:id/autoscaling route redirects here.'
 
   - id: cluster-detail-firewall
     kind: subpage
     menu: null
     route: /cluster/:id/firewall
     title: 'Firewall'
-    shows: "Firewall status, drift and rules for the cluster, the host firewall with its SSH connection settings, and the applications' outbound traffic ports."
+    shows: "Machines (firewall status, last reconciliation, provider state and the Firewall on each node), SSH connection settings for the host firewall, Applied rules, and the applications' Outbound traffic."
     actions:
       [
-        'View & manage rules',
-        'Enable the host firewall',
-        'Save SSH connection settings',
-        'Limit or open outbound ports',
+        'Manage rules',
+        'Enable host firewall',
+        'Reconcile',
+        'Turn on or Turn off the firewall on each node',
+        'Configure the SSH connection, then Save and apply',
+        'Outbound traffic: Open all, Limit or Change',
       ]
     cli: ['flui cluster host-firewall', 'flui cluster egress']
     mcp: ['cluster_host_firewall_set', 'cluster_egress']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:52',
-        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:76',
-        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:319',
-        'flui-dashboard/src/app/features/components/egress/cluster-egress-card.component.ts:16',
+        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:54',
+        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:57',
+        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:100',
+        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-tab.component.ts:164',
+        'flui-dashboard/src/app/features/components/cluster/cluster-host-layer.component.ts:49',
+        'flui-dashboard/src/app/features/components/cluster/cluster-firewall-rules.ts:16',
+        'flui-dashboard/src/app/features/components/egress/cluster-egress-card.component.ts:40',
       ]
-    notes: 'cluster_egress is read-only; changes come from the dashboard or CLI.'
+    notes: 'The SSH connection panel appears only for the host firewall. Changing outbound traffic needs egress:manage. cluster_egress is read-only; changes come from the dashboard or CLI.'
 
   - id: cluster-detail-dns
     kind: subpage
     menu: null
     route: /cluster/:id/dns
     title: 'DNS'
-    shows: 'DNS zones assigned to the cluster, standard certificate issuers, the system ingress and app endpoints.'
+    shows: 'DNS zones assigned to the cluster, Standard certificate issuers (HTTP-01), System ingress (once a zone is assigned and its issuers are ready) and the Endpoints table.'
     actions:
       [
-        'Assign or remove a DNS zone',
-        'Configure standard certificate issuers',
-        'Add or delete an app endpoint',
+        'Manage zones',
+        'Assign DNS zone or Assign another zone',
+        'Reconcile now or Remove a zone',
+        'Configure, Reconfigure or Delete the standard issuers',
+        'Add endpoint',
+        'Edit, Sync or Delete endpoint',
       ]
     cli: ['flui dns zone assign', 'flui dns zone status']
     mcp: ['dns_issuer_list', 'dns_issuer_configure']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-dns-tab.component.ts:90',
-        'flui-dashboard/src/app/features/components/cluster/cluster-dns-zone-section.component.html:4',
-        'flui-dashboard/src/app/features/components/cluster/cluster-certificate-issuers.component.ts:30',
-        'flui-dashboard/src/app/features/components/cluster/cluster-dns-tab.component.ts:122',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dns-zone-section.component.html:1',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dns-zone-section.component.html:25',
+        'flui-dashboard/src/app/features/components/cluster/cluster-certificate-issuers.component.ts:55',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dns-tab.component.ts:92',
+        'flui-dashboard/src/app/features/components/cluster/cluster-dns-tab.component.ts:98',
+        'flui-dashboard/src/app/features/components/dns/dns-endpoints-list.component.ts:138',
       ]
+    notes: 'Removing a zone and deleting the standard issuers need cluster:manage.'
 
   - id: cluster-detail-variables
     kind: subpage
     menu: null
     route: /cluster/:id/variables
     title: 'Variables'
-    shows: 'Variable sets in a chosen namespace, each marked as sensitive or not, opened in an editor.'
-    actions: ['Choose a namespace', 'Open and edit a variable set']
+    shows: 'The Variable sets in a namespace (Name, Type Sensitive or Plain, Scope, Keys); an opened set appears in an editor below.'
+    actions:
+      [
+        'Type a Namespace and Load',
+        'Open a variable set',
+        'Edit and save a variable set',
+      ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-variables-tab.component.ts:32',
-        'flui-dashboard/src/app/features/components/cluster/cluster-variables-tab.component.ts:125',
+        'flui-dashboard/src/app/features/components/cluster/cluster-variables-tab.component.ts:45',
+        'flui-dashboard/src/app/features/components/cluster/cluster-variables-tab.component.ts:52',
+        'flui-dashboard/src/app/features/components/cluster/cluster-variables-tab.component.ts:89',
+        'flui-dashboard/src/app/features/components/cluster/cluster-variables-tab.component.ts:147',
       ]
-    notes: 'The page literally shows a Namespace selector.'
+    notes: 'The page literally shows a Namespace text field, defaulting to "default".'
 
   - id: cluster-detail-pricing
     kind: subpage
     menu: null
     route: /cluster/:id/pricing
     title: 'Pricing'
-    shows: "The cluster's billing period: spent so far, expected by month end and monthly cost of this setup, split into machines and storage, with machine and volume lists."
-    actions: ['Open all costs']
+    shows: 'Cost this month (Spent so far, Expected by month end, Monthly cost of this setup, Billing period elapsed), a By resource table split into Machines and Storage, and the Machines and Volumes lists.'
+    actions: ['All costs']
     cli: ['flui costs']
     mcp: ['cost_overview']
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-pricing-tab.component.ts:106',
-        'flui-dashboard/src/app/features/components/cluster/cluster-pricing-tab.component.ts:274',
+        'flui-dashboard/src/app/features/components/cluster/cluster-pricing-tab.component.ts:57',
+        'flui-dashboard/src/app/features/components/cluster/cluster-pricing-tab.component.ts:130',
+        'flui-dashboard/src/app/features/components/cluster/cluster-pricing-machines.ts:23',
+        'flui-dashboard/src/app/features/components/cluster/cluster-pricing-machines.ts:104',
       ]
 
   - id: cluster-detail-security
     kind: subpage
     menu: null
     route: /cluster/:id/security
-    title: 'Security'
-    shows: 'Internal app protection (flui-authz): whether the Flui sign-in check is installed on this cluster.'
+    title: 'Auth proxy'
+    shows: 'The Internal app protection panel: whether flui-authz, the Flui sign-in check for internal apps and routes that require one, is installed on this cluster, with install progress.'
     actions: ['Install', 'Retry', 'Uninstall']
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/cluster/cluster-security-tab.component.ts:32',
-        'flui-dashboard/src/app/cluster.routes.ts:120',
+        'flui-dashboard/src/app/features/components/cluster/cluster-security-tab.component.ts:19',
+        'flui-dashboard/src/app/features/components/cluster/cluster-security-tab.component.ts:62',
+        'flui-dashboard/src/app/features/components/cluster/cluster-detail-sections.ts:29',
+        'flui-dashboard/src/app/features/components/cluster/cluster-overview-tab.component.html:263',
       ]
-    notes: 'The route exists but Security is not in the cluster tab bar (cluster-dashboard.component.ts:346), so it is reachable only by URL.'
+    notes: "The section is labelled Auth proxy in the cluster's Configure group and is also reached from the Auth proxy panel's Manage link on Overview. The control cluster does not need it."
 
   - id: scaling
     kind: page
     menu: ['Infrastructure', 'Scaling']
     route: /scaling
     title: 'Scaling'
-    shows: 'Every cluster in the installation, whether or not it can scale itself: situation cards (need a person, open alarms, billed to Flui) and a table with who can add a node, nodes and spend per cluster.'
-    actions: ["Open a cluster's scaling group", 'Set up scaling for a cluster']
+    shows: 'Every cluster in the installation, whether or not it can scale itself: Need a person, Open alarms and Billed to Flui tiles, and a Clusters table with Cluster, Provider, Who can add a node, Nodes and Spend.'
+    actions:
+      [
+        'Refresh',
+        "Manage a cluster's scaling group",
+        'Set up scaling (shows how for that cluster)',
+      ]
     cli: ['flui scaling list', 'flui scaling set', 'flui scaling apply']
     mcp: ['scaling_overview', 'scaling_group_set']
     sources:
       [
-        'flui-dashboard/src/app/features/components/scaling-section/scaling-overview.component.ts:43',
-        'flui-dashboard/src/app/features/components/scaling-section/overview-situation.component.ts:94',
-        'flui-dashboard/src/app/features/components/scaling-section/overview-cluster-table.component.ts:65',
-        'flui-dashboard/src/app/features/components/scaling-section/overview-cluster-table.component.ts:140',
+        'flui-dashboard/src/app/features/components/scaling-section/scaling-overview.component.ts:40',
+        'flui-dashboard/src/app/features/components/scaling-section/overview-situation.component.ts:78',
+        'flui-dashboard/src/app/features/components/scaling-section/overview-cluster-table.component.ts:46',
+        'flui-dashboard/src/app/features/components/scaling-section/overview-cluster-table.component.ts:129',
+        'flui-dashboard/src/app/features/components/scaling-section/overview-cluster-table.component.ts:143',
       ]
 
   - id: scaling-group
     kind: subpage
     menu: null
     route: /scaling/:groupId
-    title: 'Scaling group'
-    shows: 'One scaling group in tabs: Now (mode, room, what would be bought, standing orders, fleet), Group (configuration and cost), Market (provider catalogue, only when the provider has one) and History (fleet over time and decision log).'
+    title: "The scaling group's name"
+    shows: 'One scaling group in tabs: Now (mode, Node purchase, Room, If a node were needed now, Standing orders, Fleet), Group (Provisioning and node limits, what it may add on the provider, What these limits can cost), Machines (the provider Catalogue, only when the provider has one) and History (Fleet over time and Decision log).'
     actions:
       [
-        'Buy the proposed machine or remove a node',
-        'Retry a held purchase',
-        'Save or remove the group',
+        'Switch the scaling mode',
+        'Add this machine or Remove a node',
+        'Try again on a held purchase',
+        'Add a machine as a standing order',
+        'Save the group or Remove this group',
         'Read the decision log',
       ]
     cli:
@@ -406,29 +472,32 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/scaling-section/group-shell.component.ts:272',
-        'flui-dashboard/src/app/features/components/scaling-section/tab-now.component.ts:36',
-        'flui-dashboard/src/app/features/components/scaling-section/now-ladder.component.ts:178',
-        'flui-dashboard/src/app/features/components/scaling-section/now-summary.component.ts:201',
-        'flui-dashboard/src/app/features/components/scaling-section/tab-group.component.ts:83',
-        'flui-dashboard/src/app/features/components/scaling-section/tab-market.component.ts:71',
-        'flui-dashboard/src/app/features/components/scaling-section/tab-history.component.ts:128',
+        'flui-dashboard/src/app/features/components/scaling-section/group-shell.component.ts:52',
+        'flui-dashboard/src/app/features/components/scaling-section/group-shell.component.ts:196',
+        'flui-dashboard/src/app/features/components/scaling-section/tab-now.component.ts:30',
+        'flui-dashboard/src/app/features/components/scaling-section/now-ladder.component.ts:48',
+        'flui-dashboard/src/app/features/components/scaling-section/now-summary.component.ts:155',
+        'flui-dashboard/src/app/features/components/scaling-section/now-add-order.component.ts:58',
+        'flui-dashboard/src/app/features/components/scaling-section/tab-group.component.ts:101',
+        'flui-dashboard/src/app/features/components/scaling-section/tab-market.component.ts:111',
+        'flui-dashboard/src/app/features/components/scaling-section/tab-history.component.ts:37',
+        'flui-dashboard/src/app/features/components/scaling-section/history-decision-log.ts:38',
       ]
-    notes: 'Market tab appears only when the provider has a catalogue. Routes: /scaling/:groupId/now, /group, /market, /history.'
+    notes: 'The Machines tab (route /scaling/:groupId/market) appears only when the provider publishes prices; otherwise the header says the group asks for a requirement instead. Routes: /scaling/:groupId/now, /group, /market, /history.'
   - id: workloads-projects
     kind: page
     menu: ['Workloads', 'Projects']
     route: /apps/projects
     title: 'Projects'
-    shows: 'Every workload grouped by project, across kinds and clusters, with an Unassigned section for workloads outside any project. Each project section shows its slug and a summary, can be collapsed, and lists its workloads.'
+    shows: 'A table of every workload grouped by project, across kinds and clusters, with columns Workload, Status, Kind, Cluster, Ready and Released and an Unassigned group for workloads outside any project. Each project row shows its slug and a summary and can be collapsed; opening a project name shows that project alone with Details and Workloads panels.'
     actions:
       [
-        'Create a project',
-        'Edit a project',
-        'Delete an empty project',
-        'Search workloads and filter by kind',
-        'Include system workloads or hide empty projects',
-        'Open or delete a workload',
+        'New project',
+        'Edit project or Delete project from the Actions menu',
+        'Search workloads, filter by Kind, Include system, Hide empty projects',
+        'Open a workload or Delete workload',
+        'Refresh',
+        'Manage projects',
       ]
     cli:
       [
@@ -440,223 +509,280 @@ entries:
     mcp: ['project_list']
     sources:
       [
-        'flui-dashboard/src/app/features/components/projects/project-workloads.component.ts:80',
-        'flui-dashboard/src/app/features/components/projects/project-workloads.component.ts:219',
-        'flui-dashboard/src/app/features/components/projects/project-workloads.component.ts:312',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.html:70',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.html:87',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.html:120',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.html:179',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.html:4',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.ts:61',
+        'flui-dashboard/src/app/features/components/projects/project-workloads.component.ts:123',
+        'flui-dashboard/src/app/features/components/projects/project-workload-row.ts:10',
       ]
-    notes: 'New project, Edit and Delete appear only with the projects section permission (canManage). Delete is offered only for a project with no workloads. The create panel links to Manage all projects (/management/projects).'
+    notes: 'The heading carries the project count, e.g. "Projects (3)". New project, Edit and the project Actions menu appear only with the projects section permission. Delete project is disabled while the project still has workloads. A single project opens at /apps/projects?project=<id>. Opening a workload goes to its recap; Delete workload asks to type the name and is not offered for system-protected apps. Manage projects links to /management/projects.'
   - id: apps-applications
     kind: page
     menu: ['Workloads', 'Applications']
     route: /apps/applications
     title: 'Applications'
-    shows: 'A table of your applications with cluster, ready count, source, CPU and memory, backup state and last release, with apps that need attention listed first. A summary line counts applications and clusters, and applications shared as a showcase appear in a separate "In the showcase" section.'
+    shows: 'A table of your applications with columns Application, Status, Cluster, Project, Ready, Source, Usage, Backup and Released, apps that need attention listed first. A summary line counts applications and clusters, and applications shared as a showcase appear in a separate "In the showcase" panel.'
     actions:
       [
-        'Add an application: deploy from a repository or install from the catalog',
-        'Filter by type, view (All, Running, Needs attention, No backup), cluster and project',
+        'Add: Deploy from a repository or Install from the catalog',
+        'Filter by type, cluster and project, and by Running, Needs attention or No backup',
         'Search by name, domain or image',
-        'Refresh the list',
+        'Clear filters',
+        'Refresh',
         'Open an application',
       ]
     cli: ['flui app list', 'flui deploy', 'flui catalog install']
     mcp: ['app_list']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:42',
+        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:81',
+        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:143',
         'flui-dashboard/src/app/features/components/application/applications-list-kind.ts:14',
-        'flui-dashboard/src/app/features/components/application/applications-list-toolbar.component.ts:10',
-        'flui-dashboard/src/app/features/components/application/applications-list-table.component.ts:19',
-        'flui-dashboard/src/app/features/components/application/add-workload-menu.component.ts:41',
+        'flui-dashboard/src/app/features/components/application/applications-list-toolbar.component.ts:13',
+        'flui-dashboard/src/app/features/components/application/applications-list-table.component.ts:15',
+        'flui-dashboard/src/app/features/components/application/applications-list-rows.ts:374',
+        'flui-dashboard/src/app/features/components/application/add-workload-menu.component.ts:48',
+        'flui-dashboard/src/app/apps.routes.ts:27',
       ]
-    notes: 'Opening a row goes to the application recap (/apps/recap/:id). Empty state: "No applications yet". /apps/tools redirects here with ?type=tool.'
+    notes: 'The heading carries the count, e.g. "Applications (4)". Opening a row goes to the application recap (/apps/recap/:id). Empty state: "No applications yet". /apps/tools redirects here with ?type=tool.'
   - id: apps-data
     kind: page
     menu: ['Workloads', 'Data stores']
     route: /apps/data
-    title: 'Data'
-    shows: 'The same list as Applications, restricted to data stores: databases, caches, queues and object stores. Data stores bundled inside a multi-component app are also listed here on their own, and the name column is headed "Data store".'
+    title: 'Data stores'
+    shows: 'The same table as Applications, restricted to data stores: databases, caches, queues and object stores. Data stores bundled inside a multi-component app are also listed here on their own, and the name column is headed "Data store".'
     actions:
       [
-        'Add a data store: deploy from a repository or install from the catalog',
-        'Filter by type, view, cluster and project',
+        'Add: Deploy from a repository or Install from the catalog',
+        'Filter by type, cluster and project, and by Running, Needs attention or No backup',
         'Search by name, domain or image',
+        'Refresh',
         'Open a data store',
       ]
     cli: ['flui app list']
     mcp: ['app_list']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:106',
+        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:137',
+        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:407',
         'flui-dashboard/src/app/features/model/workload-list.ts:76',
         'flui-dashboard/src/app/features/components/application/applications-list-kind.ts:21',
+        'flui-dashboard/src/app/features/components/application/add-workload-menu.component.ts:15',
+        'flui-dashboard/src/app/apps.routes.ts:26',
       ]
-    notes: 'Same component as Applications with list ''data''. A bundled data store opens its detail page directly instead of the recap. The catalog link from Add carries list=data. /apps/databases redirects here. Empty state: "No data stores yet".'
+    notes: 'Same component as Applications with list ''data''. A bundled data store opens its detail page directly instead of the recap. Install from the catalog carries list=data. /apps/databases redirects here. Empty state: "No data stores yet".'
   - id: apps-system
     kind: page
     menu: ['Workloads', 'System apps']
     route: /apps/system
     title: 'System'
-    shows: "The same list restricted to Flui's own system applications, with no Add button."
+    shows: "The same table restricted to Flui's own system applications, with no Add button."
     actions:
       [
-        'Filter by type, view, cluster and project',
+        'Filter by type, cluster and project, and by Running, Needs attention or No backup',
         'Search by name, domain or image',
+        'Refresh',
         'Open a system application',
       ]
     cli: ['flui app list']
     mcp: ['app_list']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:152',
+        'flui-dashboard/src/app/features/components/application/applications-list.component.ts:185',
         'flui-dashboard/src/app/features/components/application/applications-list-kind.ts:28',
         'flui-dashboard/src/app/layout/console/console-nav.config.ts:71',
+        'flui-dashboard/src/app/apps.routes.ts:35',
       ]
     notes: 'Appears in the menu only after Show system apps is ticked in the user menu. Route title is "System Apps", page heading "System". Empty state: "No system applications found".'
   - id: app-detail
     kind: subpage
     menu: null
     route: /apps/applications/:id
-    title: 'Application Details'
-    shows: 'The application header (name, category, status, copyable ID), stat cards for replicas, image, CPU and memory and last deploy, and a tab bar with an Advanced menu (Diagnoses, Debug pods).'
+    title: 'Application name'
+    shows: 'The application header (name, status, category, copyable application ID) and a section menu: Overview, then Operate (Monitoring, Logs, Sessions, Diagnoses, Debug pods), Deliver (Revisions, Builds, Releases), Configure (Configuration, Resources, DNS, Access, Schedules, Gateway, Sign-in, Messaging) and Data (Backup).'
     actions:
       [
-        'Restart the application (Restart to apply when saved changes are pending)',
+        'Open the public address',
+        'Restart (Restart to apply when saved changes are pending)',
         'Copy the application ID',
-        'Switch tabs',
-        'Go back to the list',
+        'Switch sections',
+        'Go back to the list from the breadcrumb',
       ]
     cli: ['flui app restart', 'flui app status']
     mcp: ['app_get', 'app_status', 'app_restart']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:222',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:259',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:303',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:599',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.html:18',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.html:36',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.html:41',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.html:73',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:94',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:200',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:359',
+        'flui-dashboard/src/app/features/components/application/app-detail-sections.ts:8',
       ]
-    notes: 'Restart is hidden for read-only access and disabled when the API reports it unavailable. Tabs the caller may not open are filtered out; a tab the API marks disabled is shown greyed with its reason. Shows a Deploy failed banner for failed apps and a deleted notice for deleted ones.'
+    notes: 'The heading is the application name; the browser tab reads "Application Details". Open appears only for an app with a public endpoint. Restart is hidden for read-only access and disabled when the API reports it unavailable. Sections the caller may not open are left out, and opening one by its address lands on Overview; a section the API marks disabled is greyed with its reason. Alerts show for deleted apps, a failed deploy, replicas waiting for room (with Open scaling), showcase apps and read-only access.'
   - id: app-tab-overview
     kind: subpage
     menu: null
     route: /apps/applications/:id/overview
     title: 'Overview'
-    shows: 'The latest release with a rollback option, a status strip, a summary, connection or internal address details, the project, and recent activity.'
+    shows: 'Panels for Details, Live usage, Latest release, Protection and Recent activity, the project the app belongs to, Connect for data stores and Internal access for apps without a public endpoint, and a Delete application panel.'
     actions:
       [
-        'Roll back the latest release',
-        'Change the project',
-        'Delete the application',
+        'Rollback a failed latest release (opens Revisions)',
+        'View build on GitHub',
+        'Edit resources or Manage variables and endpoints from Details',
+        'View all activity',
+        'Delete application or Delete bundle',
       ]
     cli: ['flui app delete']
     mcp: ['app_get', 'app_rollback', 'app_removal_preview', 'app_delete']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:10',
-        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:47',
-        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:64',
-        'flui-dashboard/src/app/features/components/application/app-latest-release-card.component.ts:110',
+        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:5',
+        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:11',
+        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:42',
+        'flui-dashboard/src/app/features/components/application/app-overview-tab.component.html:58',
+        'flui-dashboard/src/app/features/components/application/app-overview-summary.component.ts:29',
+        'flui-dashboard/src/app/features/components/application/app-overview-status-strip.component.ts:16',
+        'flui-dashboard/src/app/features/components/application/app-latest-release-card.component.ts:75',
+        'flui-dashboard/src/app/features/components/application/app-overview-protection.ts:15',
+        'flui-dashboard/src/app/features/components/application/app-project-section.component.ts:31',
+        'flui-dashboard/src/app/features/components/application/app-delete-dialog.component.ts:233',
       ]
-    notes: 'Always shown. Delete is hidden for system-protected apps. "Change the project" is inferred from the embedded project section and not checked in detail.'
+    notes: 'Always shown. The project cannot be changed here: it is set when the app was created. Delete is hidden for system-protected apps; a multi-component app offers Delete bundle.'
   - id: app-tab-clients
     kind: subpage
     menu: null
     route: /apps/applications/:id/clients
     title: 'Access'
-    shows: 'The in-cluster address of a database or other data store and a card that opens its built-in browser console.'
+    shows: 'The Internal access panel with the in-cluster address of a database or other data store, and a panel that opens its built-in browser console.'
     actions:
       [
-        'Open the built-in console (Query console, Key Browser, Document Browser, and so on)',
+        'Open the built-in console (Open query console, Open key browser, Open document browser, and so on)',
       ]
     cli: ['flui db credentials', 'flui db tunnel']
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:35',
-        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:62',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:610',
+        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:20',
+        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:28',
+        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:59',
+        'flui-dashboard/src/app/features/components/application/internal-service-info.component.ts:12',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:211',
       ]
-    notes: 'Tab label is Access. Shown only for data stores (building blocks or components with a database engine).'
+    notes: 'Section label is Access, under Configure. Shown only for data stores (building blocks or components with a database engine).'
   - id: app-tab-monitoring
     kind: subpage
     menu: null
     route: /apps/applications/:id/monitoring
     title: 'Monitoring'
-    shows: 'Live CPU, memory, network and replica charts over a chosen time range, a per-replica breakdown, HTTP traffic measured at the edge, and the alert history.'
-    actions: ['Pick the time range', 'Pause or resume auto-refresh']
+    shows: 'Live CPU, Memory, Network and Replicas charts over a chosen time range, a Replicas breakdown and Pod phases, a Capacity advice panel when there is one, then the Traffic and Alerts panels.'
+    actions:
+      [
+        'Pick the time range',
+        'Refresh or Retry',
+        'Pick All replicas or a single replica',
+        'Run more copies when Capacity advises it',
+      ]
     cli: ['flui app metrics', 'flui app traffic', 'flui app alerts']
     mcp: ['app_metrics', 'app_traffic', 'app_alerts']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:9',
-        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:192',
-        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:355',
-        'flui-dashboard/src/app/features/components/application/app-alerts-section.component.ts:34',
+        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:1',
+        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:15',
+        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:46',
+        'flui-dashboard/src/app/features/components/application/app-monitoring-tab.component.html:149',
+        'flui-dashboard/src/app/features/components/application/app-monitoring-capacity.ts:21',
+        'flui-dashboard/src/app/features/components/application/app-monitoring-replicas.ts:14',
+        'flui-dashboard/src/app/features/components/application/app-traffic-section.component.ts:53',
+        'flui-dashboard/src/app/features/components/application/app-alerts-section.component.ts:20',
       ]
-    notes: 'Data stores also show disk usage at the top. The breakdown also lists "Pod Phases", as the UI labels it.'
+    notes: 'Values refresh every 5 seconds. Data stores also show disk usage at the top. The replica picker appears only with more than one replica.'
   - id: app-tab-logs
     kind: subpage
     menu: null
     route: /apps/applications/:id/logs
     title: 'Logs'
-    shows: "The application's logs with a log volume distribution and counts per level."
+    shows: "The application's log entries with a log volume chart and a count per level."
     actions:
       [
         'Search logs',
-        'Filter by level and time range',
+        'Toggle levels and pick the time range, or select dates for a custom range',
+        'Select a range on the volume chart',
         'Refresh',
-        'Download logs',
+        'Download',
       ]
     cli: ['flui app logs']
     mcp: ['app_logs']
     sources:
       [
         'flui-dashboard/src/app/features/components/application/app-logs-tab.component.ts:21',
-        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:53',
-        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:96',
+        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:70',
+        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:91',
+        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:106',
+        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:178',
+        'flui-dashboard/src/app/features/components/application/app-logs-viewer.component.ts:186',
       ]
-    notes: 'Shows a warning that mask mode cannot protect log content.'
+    notes: 'With mask mode on, a warning says mask mode cannot protect log content. A start and end in the address open the logs on that range.'
   - id: app-tab-revisions
     kind: subpage
     menu: null
     route: /apps/applications/:id/revisions
     title: 'Revisions'
-    shows: "An activity feed of the application's history events, filterable by event type."
-    actions: ['Filter events', 'Load more', 'Roll back to a revision']
+    shows: 'A Revision history table with columns Revision, Change, Status, By and When, filterable by event type (All, Deploy, Scale, Restart, Stop and start, Resources).'
+    actions: ['Filter by event type', 'Load more', 'Roll back to this revision']
     cli: []
     mcp: ['app_events', 'app_rollback']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-revisions-tab.component.ts:24',
+        'flui-dashboard/src/app/features/components/application/app-revisions-tab.component.ts:19',
+        'flui-dashboard/src/app/features/components/application/app-revisions-tab.component.ts:70',
+        'flui-dashboard/src/app/features/components/application/app-activity-feed.component.ts:31',
+        'flui-dashboard/src/app/features/components/application/app-activity-feed.component.ts:67',
+        'flui-dashboard/src/app/features/components/application/app-activity-feed.component.ts:180',
       ]
+    notes: 'Roll back asks for confirmation and redeploys what ran at that revision.'
   - id: app-tab-configuration
     kind: subpage
     menu: null
     route: /apps/applications/:id/configuration
     title: 'Configuration'
-    shows: "Two editors for the application's variables: plain variables and sensitive variables, with sensitive keys still waiting for a value marked."
+    shows: "Two panels for the application's variables: Variables (plain) and Secrets (write-only), with secret keys still waiting for a value marked."
     actions:
-      ['Edit and save plain variables', 'Edit and save sensitive variables']
+      [
+        'Add variable or Add secret',
+        'Edit plain variables as JSON',
+        'Save changes or Cancel',
+      ]
     cli: ['flui app env list', 'flui app env set']
     mcp: ['app_variables', 'app_variable_set', 'app_variable_request']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-configuration-tab.component.ts:76',
-        'flui-dashboard/src/app/features/components/application/app-configuration-tab.component.ts:85',
+        'flui-dashboard/src/app/features/components/application/app-configuration-tab.component.ts:43',
+        'flui-dashboard/src/app/features/components/application/app-configuration-tab.component.ts:51',
+        'flui-dashboard/src/app/features/components/application/app-variables-editor.component.ts:64',
+        'flui-dashboard/src/app/features/components/application/app-variables-editor.component.ts:84',
+        'flui-dashboard/src/app/features/components/application/app-variables-editor.component.ts:186',
       ]
-    notes: 'The editor titles literally read "Plain Variables (ConfigMap)" and "Sensitive Variables (Secrets)".'
+    notes: 'When opened from a diagnosis, a "Suggested by the diagnosis" note names the missing variable.'
   - id: app-tab-resources
     kind: subpage
     menu: null
     route: /apps/applications/:id/resources
     title: 'Resources'
-    shows: "The application's CPU and memory and replica settings, with a proposed memory change when there is one, its maintenance window, autoscaling, and which outside ports it may reach."
+    shows: 'A panel per container with reserved and maximum CPU and memory, the Replicas panel, a "Flui proposes more memory" notice when there is one, and the Maintenance, Autoscaling and Outbound ports panels.'
     actions:
       [
-        'Change CPU and memory',
-        'Change replicas or autoscaling',
-        'Apply or defer a proposed resource change',
-        'Set the maintenance window',
+        'Edit container CPU and memory',
+        'Change replicas and Apply',
+        'Choose Fixed count or Follow the load in Autoscaling and Save',
+        'Apply and restart a proposed memory change, or defer it to the next window',
+        'Set the maintenance window: Follow cluster, Own window or Any time',
       ]
     cli:
       [
@@ -680,54 +806,80 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-resources-tab.component.ts:44',
-        'flui-dashboard/src/app/features/components/application/app-resources-tab.component.ts:48',
-        'flui-dashboard/src/app/features/components/application/app-resources-tab.component.ts:64',
+        'flui-dashboard/src/app/features/components/application/app-resources-tab.component.ts:42',
+        'flui-dashboard/src/app/features/components/application/app-resources-tab.component.ts:47',
+        'flui-dashboard/src/app/features/components/application/app-resources-tab.component.ts:62',
+        'flui-dashboard/src/app/features/components/application/app-resources-editor.component.ts:90',
+        'flui-dashboard/src/app/features/components/application/replicas-panel.ts:32',
+        'flui-dashboard/src/app/features/components/application/app-resource-proposal.component.ts:31',
+        'flui-dashboard/src/app/features/components/maintenance/app-maintenance-card.component.ts:69',
+        'flui-dashboard/src/app/features/components/application/app-autoscaling-card.component.ts:32',
+        'flui-dashboard/src/app/features/components/egress/app-egress-note.component.ts:18',
       ]
-    notes: 'Proposal, maintenance, autoscaling and egress cards are hidden for read-only access; the editor is view-only then. Child card contents were not read in detail.'
+    notes: 'The proposal, Maintenance, Autoscaling and Outbound ports panels are hidden for read-only access, and the rest is view-only then. Saving container resources restarts the app.'
   - id: app-tab-dns
     kind: subpage
     menu: null
     route: /apps/applications/:id/dns
     title: 'DNS'
-    shows: "The DNS zone assigned to the cluster and the application's endpoints."
+    shows: "The DNS zone assigned to the cluster and the application's Endpoints table with Hostname, Target, Record, DNS and TLS columns."
     actions:
-      ['Add an endpoint', 'Edit or delete an endpoint', 'Refresh endpoints']
+      [
+        'Add endpoint',
+        'Edit endpoint, Sync endpoint or Delete endpoint',
+        'Refresh endpoints',
+        'Open cluster DNS',
+      ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:74',
-        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:102',
-        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:178',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:627',
+        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:65',
+        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:77',
+        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:110',
+        'flui-dashboard/src/app/features/components/application/app-dns-tab.component.ts:117',
+        'flui-dashboard/src/app/features/components/dns/dns-endpoints-list.component.ts:57',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:228',
       ]
-    notes: 'Hidden for data stores. Internal apps get a simplified view. With no zone assigned it links to the cluster DNS settings. Add Endpoint is hidden for read-only access.'
+    notes: 'Hidden for data stores. Internal apps get an "Internal app" note: their endpoints use the .internal subdomain and are reachable only through the dashboard. With no zone assigned it links to the cluster DNS settings. Add endpoint and the edit actions are hidden for read-only access.'
   - id: app-tab-builds
     kind: subpage
     menu: null
     route: /apps/applications/:id/builds
     title: 'Builds'
-    shows: 'Build history for this application with provider, status, branch, commit, image, duration and start time.'
-    actions: ['Force new build', 'Deploy a build', 'Refresh']
+    shows: 'A Builds table with Commit, Status, Branch, Provider, Image, Duration and Started columns; a finished image not yet running is tagged "Ready to release".'
+    actions:
+      [
+        'Force new build',
+        'Release a build',
+        'View a build or View on GitHub',
+        'Refresh',
+      ]
     cli: ['flui app builds', 'flui app build']
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/builds/app-builds-list.component.ts:29',
-        'flui-dashboard/src/app/features/components/application/builds/app-builds-list.component.ts:47',
-        'flui-dashboard/src/app/features/components/application/builds/app-build-row.component.ts:69',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:630',
+        'flui-dashboard/src/app/features/components/application/builds/app-builds-list.component.ts:43',
+        'flui-dashboard/src/app/features/components/application/builds/app-builds-list.component.ts:53',
+        'flui-dashboard/src/app/features/components/application/builds/app-builds-list.component.ts:127',
+        'flui-dashboard/src/app/features/components/application/builds/app-build-row.component.ts:57',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:231',
       ]
-    notes: 'Shown only for apps built from a repository. Force new build appears only for GitHub Actions builds.'
+    notes: 'Shown only for apps built from a repository. Force new build appears only for GitHub Actions builds. View opens the build progress page.'
   - id: app-tab-releases
     kind: subpage
     menu: null
     route: /apps/applications/:id/releases
     title: 'Releases'
-    shows: 'Each image version, which one is deployed and the outcome of past releases, with badges for an available update and auto-deploy on push.'
+    shows: 'The Current release panel, tagged "Update available" when there is a newer version, and a Versions table with Tag, Status, Digest, Platforms, Created, Last released and Releases columns.'
     actions:
-      ['Deploy a version', 'Delete an image version', 'Load more', 'Refresh']
+      [
+        'Deploy a version',
+        'Delete image',
+        'Include versions it cannot run',
+        'Load more',
+        'Refresh',
+      ]
     cli:
       [
         'flui app versions',
@@ -739,23 +891,31 @@ entries:
     mcp: ['app_releases']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-images-tab.component.ts:44',
-        'flui-dashboard/src/app/features/components/application/app-images-tab.component.ts:225',
-        'flui-dashboard/src/app/features/components/application/app-images-tab.component.ts:285',
+        'flui-dashboard/src/app/features/components/application/app-images-tab.component.ts:50',
+        'flui-dashboard/src/app/features/components/application/app-images-tab.component.ts:88',
+        'flui-dashboard/src/app/features/components/application/app-images-tab.component.ts:120',
+        'flui-dashboard/src/app/features/components/application/app-current-release.ts:30',
+        'flui-dashboard/src/app/features/components/application/app-release-row.ts:95',
+        'flui-dashboard/src/app/features/components/application/app-release-row.ts:130',
+        'flui-dashboard/src/app/apps.routes.ts:133',
       ]
-    notes: '/images redirects here. May show "GitHub integration required".'
+    notes: '/images redirects here. With auto-deploy on push, Deploy is off and an "Auto-deploy on push" note explains it. Delete image is hidden for read-only access. May show "GitHub integration required" with Go to Repositories.'
   - id: app-tab-snapshots
     kind: subpage
     menu: null
     route: /apps/applications/:id/snapshots
     title: 'Backup'
-    shows: 'How the application is protected off the cluster, its volume backups, and volume copies kept on the same disk; databases also get logical backup and continuous backup.'
+    shows: 'The Backup protection panel (whether the app is protected off the cluster, its backup policies and the Backup before each deploy setting), Volume backups, Volume copies kept on the same disk, and Restored and previous volumes when there are any; databases also get Logical backup and Point-in-time recovery or Scheduled dumps.'
     actions:
       [
-        'Turn on backup before each deploy',
-        'Restore or delete a volume backup',
-        'Take, restore or delete a volume copy',
-        'Take a logical backup of a database',
+        "Protect this app or database, or choose Don't back up this app",
+        'Back up now',
+        'Set Backup before each deploy to Off, On or Required',
+        'Restore a volume backup, or Browse files and Delete from its actions menu',
+        'Take a copy, then Restore or Delete a volume copy',
+        'Use this or Delete a restored or previous volume',
+        'Download dump or Restore from dump (databases)',
+        'Restore to a point in time or Restore the latest dump (databases)',
       ]
     cli:
       [
@@ -774,25 +934,32 @@ entries:
     mcp: ['app_volume_backup_list', 'app_backup_before_deploy']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:82',
-        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:102',
-        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:120',
-        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:159',
-        'flui-dashboard/src/app/features/components/application/app-backup-protection.component.ts:193',
+        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:58',
+        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:85',
+        'flui-dashboard/src/app/features/components/application/app-snapshots-tab.component.ts:124',
+        'flui-dashboard/src/app/features/components/application/app-backup-decision.component.ts:44',
+        'flui-dashboard/src/app/features/components/application/app-backup-protection.component.ts:70',
+        'flui-dashboard/src/app/features/components/application/app-backup-protection.component.ts:142',
+        'flui-dashboard/src/app/features/components/application/volume-backups-table.component.ts:110',
+        'flui-dashboard/src/app/features/components/application/spare-volumes.ts:14',
+        'flui-dashboard/src/app/features/components/application/db-logical-backup.component.ts:53',
+        'flui-dashboard/src/app/features/components/application/db-pitr.component.ts:31',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:235',
       ]
-    notes: 'Tab label is Backup, route is snapshots. Child components (protection, volume backups, logical backup, continuous backup) were only skimmed; exact actions there are not fully verified.'
+    notes: 'Section label is Backup (in the Data group of the application sections), route is snapshots. Take a copy appears only when the cluster supports volume copies; when a copy is refused the page offers Stop, copy and restart or Copy it as it is. Restore from dump appears only when the engine supports it.'
   - id: app-tab-schedules
     kind: subpage
     menu: null
     route: /apps/applications/:id/schedules
     title: 'Schedules'
-    shows: 'Scheduled jobs with name, cron schedule, command, state and last run.'
+    shows: 'The Scheduled jobs table with Name (and command), Schedule, Last run, Next run and Enabled; Run history lists each run with status, trigger and logs.'
     actions:
       [
-        'Create or edit a scheduled job',
+        'New schedule',
         'Run now',
-        'Suspend or enable a job',
-        'View runs or delete a job',
+        'Suspend or enable a job with its Enabled switch',
+        'Run history, Edit or Delete from the job actions menu',
+        'Refresh',
       ]
     cli:
       [
@@ -818,24 +985,27 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-schedules-tab.component.ts:49',
-        'flui-dashboard/src/app/features/components/application/app-schedules-tab.component.ts:69',
-        'flui-dashboard/src/app/features/components/application/app-schedules-tab.component.ts:179',
-        'flui-dashboard/src/app/features/components/application/app-schedules-tab.component.ts:234',
+        'flui-dashboard/src/app/features/components/application/app-schedules-tab.component.ts:40',
+        'flui-dashboard/src/app/features/components/application/app-schedules-tab.component.ts:52',
+        'flui-dashboard/src/app/features/components/application/schedule-jobs-table.ts:110',
+        'flui-dashboard/src/app/features/components/application/schedule-jobs-table.ts:140',
+        'flui-dashboard/src/app/features/components/application/schedule-editor.ts:93',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:239',
       ]
-    notes: 'Hidden for data stores. The job form takes name, cron schedule, command, timezone and overlap policy.'
+    notes: 'Hidden for data stores. The job form takes name, cron schedule, command, timezone and overlap policy. Jobs marked From flui.yaml offer only Run history in their actions menu, not Edit or Delete.'
   - id: app-tab-sessions
     kind: subpage
     menu: null
     route: /apps/applications/:id/sessions
     title: 'Sessions'
-    shows: 'Who is connected to the PostgreSQL database and what each session is doing, plus a Pooler section with pools and pooled clients.'
+    shows: 'A Sessions panel with a health status and summary, a Connections table (Who, State, For, Query) of who is connected to the PostgreSQL database, and a Pooler panel with pools and pooled clients when a pooler is present.'
     actions:
       [
-        'Cancel a query',
-        'Close a session',
-        'Close a pooled client',
-        'Show idle sessions or refresh every 5 s',
+        'Cancel query',
+        'Close session from the session actions menu',
+        'Close connection on a pooled client',
+        'Show idle, Every 5 s auto-refresh, Refresh',
+        'Show details of the pooler',
       ]
     cli:
       [
@@ -855,24 +1025,28 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:132',
-        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:177',
-        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:239',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:613',
+        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:100',
+        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:159',
+        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:231',
+        'flui-dashboard/src/app/features/components/application/app-sessions-tab.component.ts:464',
+        'flui-dashboard/src/app/features/components/application/sessions-pooler.ts:14',
+        'flui-dashboard/src/app/features/components/application/sessions-pooler.ts:117',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:213',
       ]
-    notes: "Shown only for PostgreSQL databases when the caller's access includes data."
+    notes: "Shown only for PostgreSQL databases when the caller's access includes data. Values in queries are hidden."
   - id: app-tab-gateway
     kind: subpage
     menu: null
     route: /apps/applications/:id/gateway
     title: 'Gateway'
-    shows: 'Routes into this app and their edge policies: SSO, rate limit, IP filter, with host, path, policies and status.'
+    shows: 'The Routes table into this app with Host, Path, TLS, Policies and Status; expanding a route shows its Authentication, Rate limit and IP filtering policies.'
     actions:
       [
-        'Add route',
-        'Set SSO minimum role, rate limit and IP filtering on a route',
-        'Reconcile a route now',
-        'Remove a route',
+        'Add route (host, path prefix, HTTPS or HTTP only)',
+        'Set Minimum role, rate limit and Allowed ranges on a route, then Save policies',
+        'Reconcile now',
+        'Remove route from the route actions menu',
+        'Refresh',
       ]
     cli:
       [
@@ -899,111 +1073,130 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:51',
-        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:70',
-        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:212',
-        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:279',
+        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:59',
+        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:88',
+        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:130',
+        'flui-dashboard/src/app/features/components/application/app-gateway-tab.component.ts:27',
+        'flui-dashboard/src/app/features/components/application/gateway-route-policies.ts:26',
+        'flui-dashboard/src/app/features/components/application/gateway-route-policies.ts:124',
+        'flui-dashboard/src/app/features/components/application/gateway-add-route-dialog.ts:72',
       ]
-    notes: 'Hidden for data stores.'
+    notes: 'Hidden for data stores. Policy changes are applied to the cluster in the background after saving.'
   - id: app-tab-diagnoses
     kind: subpage
     menu: null
     route: /apps/applications/:id/diagnoses
     title: 'Diagnoses'
-    shows: 'Crash diagnoses for the application, filterable by severity and category, each opening a detail with exit code, log snippet, events and any suggested fix.'
+    shows: 'Crash diagnoses for the application (Severity, Diagnosis, Detected, State), filterable by severity and category; each opens a detail with pod, exit code, explanation, suggested action, log excerpt and Kubernetes events.'
     actions:
       [
         'Filter by severity and category',
         'Open a diagnosis',
-        'Apply a suggested fix',
+        'Apply a suggested action',
         'Dismiss a diagnosis',
+        'Load more',
+        'Refresh',
       ]
     cli: ['flui app crashes', 'flui app crash']
     mcp: ['app_debug', 'app_crash_apply']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/crash-diagnoses/app-diagnoses-tab.component.ts:125',
-        'flui-dashboard/src/app/features/components/application/crash-diagnoses/diagnosis-detail-dialog.component.ts:144',
-        'flui-dashboard/src/app/features/components/application/crash-diagnoses/diagnosis-detail-dialog.component.ts:273',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:483',
+        'flui-dashboard/src/app/features/components/application/crash-diagnoses/app-diagnoses-tab.component.ts:73',
+        'flui-dashboard/src/app/features/components/application/crash-diagnoses/app-diagnoses-tab.component.ts:122',
+        'flui-dashboard/src/app/features/components/application/crash-diagnoses/diagnosis-detail-dialog.component.ts:66',
+        'flui-dashboard/src/app/features/components/application/crash-diagnoses/diagnosis-detail-dialog.component.ts:149',
+        'flui-dashboard/src/app/features/components/application/crash-diagnoses/diagnosis-detail-dialog.component.ts:180',
+        'flui-dashboard/src/app/features/components/application/app-detail-sections.ts:43',
       ]
-    notes: 'Reached from the Advanced menu, which shows a count of unresolved recent diagnoses.'
+    notes: 'Listed in the Operate group of the application sections, with a count of unresolved recent diagnoses. A redeploy suggestion shows a disabled Redeploy (coming soon) button.'
   - id: app-tab-debug-pods
     kind: subpage
     menu: null
     route: /apps/applications/:id/debug-pods
     title: 'Debug pods'
-    shows: 'An on-demand snapshot of the application pods, as the UI calls them, with per-pod details and links to related diagnoses.'
+    shows: 'An on-demand Pods table (Pod, Phase, Ready, Restarts, Node, Issues); expanding a pod shows its Conditions, Containers, Volumes, Events and Scheduling, and a link to a diagnosis when one exists.'
     actions:
-      [
-        'Refresh the snapshot',
-        "Open a pod's details",
-        'Open a related diagnosis',
-      ]
+      ['Refresh the snapshot', "Expand a pod's details", 'Open diagnosis']
     cli: []
     mcp: ['app_debug']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/pod-debug/app-pod-debug-tab.component.ts:38',
-        'flui-dashboard/src/app/features/components/application/pod-debug/app-pod-debug-tab.component.ts:100',
-        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:483',
+        'flui-dashboard/src/app/features/components/application/pod-debug/app-pod-debug-tab.component.ts:48',
+        'flui-dashboard/src/app/features/components/application/pod-debug/app-pod-debug-tab.component.ts:94',
+        'flui-dashboard/src/app/features/components/application/pod-debug/pod-detail.component.ts:45',
+        'flui-dashboard/src/app/features/components/application/pod-debug/pod-detail.component.ts:66',
+        'flui-dashboard/src/app/features/components/application/application-detail.component.ts:94',
       ]
-    notes: 'Reached from the Advanced menu. Rate limited to 10 requests per minute, no automatic polling.'
+    notes: 'Listed in the Operate group of the application sections. Up to 10 refreshes per minute, no automatic refresh; when rate limited the button shows Retry in N s.'
   - id: app-recap
     kind: subpage
     menu: null
     route: /apps/recap/:id
     title: 'App Recap'
-    shows: 'A one-page summary of an application or bundle: header, health and key facts, backup state, database cards, management links and recent activity; a multi-component bundle shows a topology of its components.'
+    shows: 'A one-page summary of a multi-component bundle, headed by its name with status and kind: a Components table (Component, Kind, Status, Endpoint, Replicas, CPU, Memory, Disk, If a node is lost, Backup), a card per database with last backup, volume use and connection details, and Recent activity.'
     actions:
       [
-        'Back up now',
-        'Open the full application detail',
-        'Protect an unprotected data store',
-        'Delete the application or bundle',
+        'Open, Logs or Manage from the header',
+        'Back up now or Protect a component',
+        'Protect it from a backup warning',
+        'Connect to a database or open its console',
+        'All events',
+        'Delete bundle',
       ]
     cli: ['flui app status', 'flui app delete']
     mcp: ['app_get', 'app_status', 'app_availability', 'app_delete']
     sources:
       [
-        'flui-dashboard/src/app/features/components/application/app-recap.component.ts:72',
-        'flui-dashboard/src/app/features/components/application/app-recap.component.ts:108',
-        'flui-dashboard/src/app/features/components/application/app-recap.component.ts:126',
-        'flui-dashboard/src/app/features/components/application/app-recap.component.ts:130',
+        'flui-dashboard/src/app/features/components/application/app-recap-header.component.ts:24',
+        'flui-dashboard/src/app/features/components/application/app-recap-header.component.ts:68',
+        'flui-dashboard/src/app/features/components/application/app-recap-topology.component.ts:48',
+        'flui-dashboard/src/app/features/components/application/app-recap-component-card.component.ts:100',
+        'flui-dashboard/src/app/features/components/application/app-recap-database.component.ts:42',
+        'flui-dashboard/src/app/features/components/application/app-recap-activity.component.ts:14',
+        'flui-dashboard/src/app/features/components/application/app-recap.component.ts:140',
+        'flui-dashboard/src/app/features/components/application/app-recap.component.ts:352',
+        'flui-dashboard/src/app/features/components/application/app-delete-dialog.component.ts:234',
       ]
-    notes: 'Opened from the workload lists and Projects. Delete is hidden for read-only access. What Back up now calls was not traced.'
+    notes: 'The browser tab title is App Recap; the page heading is the bundle name. A single application, or a bundle with one component, is redirected to its application Overview. Opened from the workload lists, Projects, Topology and the guest home. Delete, backup buttons and connection details are hidden for read-only access, which shows an Open SQL console link instead.'
   - id: database-console
     kind: subpage
     menu: null
     route: /db-console/:applicationId
-    title: 'SQL Console'
-    shows: 'A browser SQL console for a database with a schema tree, editor, result grid, query history and an assistant that proposes SQL from a plain-language question.'
+    title: 'SQL console'
+    shows: 'A browser SQL console for a database with a connection status, a schema tree, a Query panel with the editor, a result grid and an SQL assistant that proposes SQL from a plain-language question.'
     actions:
       [
-        'Run a query',
-        'Toggle read-only and set a row limit',
-        'Pick from history',
-        'Ask the assistant for SQL',
+        'Run (or Ctrl/Cmd+Enter)',
+        'Toggle Read-only and set Limit',
+        'Pick from History',
+        'Browse a table from the schema tree',
+        'Export results as CSV or JSON',
+        'Ask the assistant for SQL, then insert or run it',
+        'Retry when not connected',
       ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:77',
-        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:152',
-        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:200',
-        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:69',
+        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:47',
+        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:82',
+        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:116',
+        'flui-dashboard/src/app/features/components/database-console/db-console-page.component.ts:162',
+        'flui-dashboard/src/app/features/components/database-console/sql-result-grid.component.ts:62',
+        'flui-dashboard/src/app/features/components/database-console/store-console-header.ts:38',
+        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:59',
+        'flui-dashboard/src/app/features/components/application/app-db-connect-card.component.ts:161',
       ]
-    notes: 'Opened from the Access tab (Open Query console) or the connect card on the recap and catalog install pages. Read-only by default. The assistant receives the schema and the question, never result data.'
+    notes: "Opened from the Access tab (Open query console) or the Connect to this database card on the database Overview, the bundle recap and catalog install pages (Open SQL Console). Read-only by default; a caller with read-only access sees Read-only, the showcase's own data and cannot switch it off. The assistant receives the schema and the question, never result data."
   - id: data-consoles
     kind: subpage
     menu: null
     route: '/<family>-console/:applicationId'
     title: 'Data consoles'
-    shows: 'Built-in browser consoles for other data stores: Key Browser (kv), Document Browser (doc), Object Storage (object-store), Search Console (search), Messaging Monitor (messaging), Cache Console (cache), Secrets Console (secrets), Kafka Console (kafka) and Meilisearch Console (meilisearch).'
+    shows: 'Built-in browser consoles for other data stores, headed Key browser (kv), Document browser (doc), Object storage (object-store), Search console (search), Messaging console (messaging), Cache console (cache), Secrets (secrets), Kafka console (kafka) and Meilisearch console (meilisearch).'
     actions:
       [
-        "Open the console from the data store's Access tab",
+        "Open the console from the data store's Access tab or its connect card",
         "Browse and inspect the store's data",
       ]
     cli: []
@@ -1011,63 +1204,83 @@ entries:
     sources:
       [
         'flui-dashboard/src/app/database-console.routes.ts:13',
-        'flui-dashboard/src/app/features/model/db-engine.ts:290',
-        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:62',
+        'flui-dashboard/src/app/features/model/db-engine.ts:268',
+        'flui-dashboard/src/app/features/components/application/app-clients-tab.component.ts:51',
+        'flui-dashboard/src/app/features/components/database-console/kv-console-page.component.ts:44',
+        'flui-dashboard/src/app/features/components/database-console/messaging-console-page.component.ts:47',
       ]
-    notes: "The console is chosen by the store's engine family. Per the Access tab copy, most are read-only by default; the storage browser can upload, download, delete and share files, the messaging console can publish and peek messages, and the Kafka and Meilisearch consoles include an AI copilot. Console pages themselves were not read."
+    notes: "The console is chosen by the store's engine family. Per the Access tab copy, most are read-only by default; the storage browser can upload, download, delete and share files, the messaging console can publish and peek messages, the cache console can look up, set or delete entries, and the Kafka and Meilisearch consoles include an AI copilot. Only the page headings were checked, not each console's controls."
   - id: deploy-catalog
     kind: page
     menu: ['Delivery', 'App catalog']
     route: /apps/catalog
-    title: 'App Catalog'
-    shows: "A searchable marketplace of ready-made open-source apps, grouped into Data, Applications, Tools and System, with category chips and tag filters. Each card opens the app's detail page."
+    title: 'App catalog'
+    shows: 'A table of curated open-source apps with App, Category, Version and Installed columns, grouped into Data, Applications, Tools and System. A toolbar searches by name, tag or alternative and filters by Category and Tag.'
     actions:
       [
-        'search apps by name or purpose',
-        'filter by category and tags',
-        'show or hide system apps',
-        'open an app to deploy it',
+        'Search apps',
+        'Filter by Category and Tag',
+        'Show or hide system apps',
+        'Refresh',
+        'Install an app (opens Deploy)',
+        "Open an app's detail page",
       ]
     cli: ['flui catalog list', 'flui catalog install']
     mcp: ['catalog_search', 'catalog_get_app', 'app_install']
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:225',
-        'flui-dashboard/src/app/features/components/catalog/catalog-list.component.ts:102',
-        'flui-dashboard/src/app/features/components/catalog/catalog-list.component.ts:269',
-        'flui-dashboard/src/app/features/components/catalog/catalog-scope.ts:30',
+        'flui-dashboard/src/app/apps.routes.ts:244',
+        'flui-dashboard/src/app/features/components/catalog/catalog-list.component.ts:62',
+        'flui-dashboard/src/app/features/components/catalog/catalog-list-toolbar.ts:22',
+        'flui-dashboard/src/app/features/components/catalog/catalog-list-toolbar.ts:92',
+        'flui-dashboard/src/app/features/components/catalog/catalog-list-table.ts:98',
+        'flui-dashboard/src/app/features/components/catalog/catalog-scope.ts:13',
       ]
-    notes: 'The hero title and subtitle change when the page is opened scoped to one section (scopeCopy); the default title is "Deploy open-source apps in one click".'
+    notes: 'The heading shows the app count. Opened from Applications, Data stores or System apps (?list=), it is scoped to that list and titled "Add an application", "Add a data store" or "Add a system app", without the system apps toggle. On a read-only demo, Install opens the install prompt instead of the wizard.'
 
   - id: deploy-catalog-app
     kind: subpage
     menu: null
     route: /apps/catalog/:slug
-    title: 'App Details'
-    shows: 'One catalog app with its description, the inputs and editable settings it asks for, links to its website, docs and source, and your existing instances of it.'
-    actions: ['deploy to a cluster', 'open an existing instance']
+    title: 'App details'
+    shows: 'One catalog app with its category, version and license, a Your instances panel when it is already installed, and three tabs: Overview (About, Requirements, Dependencies), Configuration (Asked at install, Editable settings) and Manifest.'
+    actions:
+      [
+        'Install',
+        'Switch between Overview, Configuration and Manifest',
+        'Open an existing instance',
+      ]
     cli: ['flui catalog install']
     mcp: ['catalog_get_app', 'app_install']
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:244',
-        'flui-dashboard/src/app/features/components/catalog/catalog-detail.component.ts:144',
-        'flui-dashboard/src/app/features/components/catalog/catalog-detail.component.ts:188',
+        'flui-dashboard/src/app/apps.routes.ts:260',
+        'flui-dashboard/src/app/features/components/catalog/catalog-detail.component.ts:55',
+        'flui-dashboard/src/app/features/components/catalog/catalog-detail.component.ts:86',
+        'flui-dashboard/src/app/features/components/catalog/catalog-view.ts:30',
+        'flui-dashboard/src/app/features/components/catalog/catalog-detail-instances.ts:14',
+        'flui-dashboard/src/app/features/components/catalog/catalog-detail-config.ts:19',
       ]
+    notes: 'The heading is the app''s name, with App catalog in the breadcrumb. Install opens the Deploy wizard for this app. On a demo trial an app outside the trial shows "Not part of the trial" and no Install button.'
 
   - id: deploy-repositories
     kind: page
     menu: ['Delivery', 'Repositories']
     route: /apps/repositories
-    title: 'Git Repositories'
-    shows: 'The GitHub connection state and the repositories imported into Flui, with counts of total, connected and auto-deploy enabled repositories. Each repository card shows its branch, language, detected framework and badges such as Webhook Active or Auto-deploy.'
+    title: 'Repositories'
+    shows: 'The Imported repositories table (Repository, Default branch, Visibility, Language, Last commit, Webhook, Auto-deploy, Imported) above a GitHub connection panel and, with the GitHub App on an external registry, a GHCR registry token panel. The header counts imported repositories and those with auto-deploy.'
     actions:
       [
-        'connect GitHub or set up the GitHub integration',
-        'import repositories from GitHub',
-        'deploy from a repository',
-        "open a repository's readiness map",
-        'remove a repository from Flui',
+        'Import repositories',
+        'Deploy a repository',
+        'Open readiness map',
+        'View on GitHub',
+        'Remove a repository',
+        'Set up GitHub or Reconfigure GitHub',
+        'Install and authorize Flui, or Connect with token',
+        'Manage permissions or Disconnect',
+        'Add, Rotate, Update expiry or Remove the GHCR token',
+        'Refresh',
       ]
     cli:
       [
@@ -1088,185 +1301,215 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:188',
-        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:172',
-        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:443',
-        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:602',
-        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:873',
-        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:894',
+        'flui-dashboard/src/app/apps.routes.ts:207',
+        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:67',
+        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:96',
+        'flui-dashboard/src/app/features/components/application/repositories-list.component.ts:247',
+        'flui-dashboard/src/app/features/components/application/repositories-table.ts:11',
+        'flui-dashboard/src/app/features/components/application/repositories-connection.ts:42',
+        'flui-dashboard/src/app/features/components/application/repositories-ghcr-panel.ts:15',
+        'flui-dashboard/src/app/features/components/application/repositories-deploy-store.ts:16',
       ]
-    notes: 'Content depends on the GitHub setup state: admins see Setup or Reconfigure GitHub Integration, other users are told to contact an administrator, and on a demo trial the page shows "Not part of the trial". Removing does not delete the repository on GitHub.'
+    notes: 'The table appears only once GitHub is connected. When GitHub is not set up, admins get Set up GitHub and other users are told to ask an administrator; when the live check fails, admins get Reconfigure GitHub; on a demo trial the panel shows "Not part of the trial". Deploy opens the Deploy wizard, or, when applications already build from the repository, a choice between Trigger new build and Deploy as a new application. Removing keeps the repository on GitHub; disconnecting removes every repository imported from it.'
 
   - id: deploy-repo-map
     kind: subpage
     menu: null
     route: /apps/repositories/:id/map
-    title: 'Deployment Readiness'
-    shows: 'Reads a repository at a chosen branch for a chosen cluster and reports a verdict, what you need to provide, what is in the way, what could not be told, and what would run.'
+    title: 'Readiness map'
+    shows: 'Reads a repository at a chosen branch for a chosen cluster and shows a verdict, What you need to provide, In the way, We could not tell, and a What would run table (Name, Build, Readiness), with the generated flui.yaml and the raw map on demand.'
     actions:
       [
-        'choose branch and cluster',
-        'check or check again',
-        'deploy from this map',
+        'Choose Branch and Cluster',
+        'Check or Check again',
+        'Deploy from this map',
+        'Show or copy flui.yaml',
+        'Show the raw map',
       ]
     cli: ['flui repo map show', 'flui repo map apply']
     mcp: ['repo_map', 'repo_map_apply']
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:207',
-        'flui-dashboard/src/app/features/components/repo-map/repo-map.component.ts:174',
-        'flui-dashboard/src/app/features/components/repo-map/repo-map.component.ts:520',
+        'flui-dashboard/src/app/apps.routes.ts:223',
+        'flui-dashboard/src/app/features/components/repo-map/repo-map.component.ts:67',
+        'flui-dashboard/src/app/features/components/repo-map/repo-map-controls.ts:87',
+        'flui-dashboard/src/app/features/components/repo-map/repo-map-findings.ts:23',
+        'flui-dashboard/src/app/features/components/repo-map/repo-map-gaps.ts:12',
+        'flui-dashboard/src/app/features/components/repo-map/repo-map-units.ts:16',
+        'flui-dashboard/src/app/features/components/repo-map/repo-map-apply.ts:105',
       ]
+    notes: "Reached from a repository's Open readiness map action. The heading is the repository's full name (Deploy readiness while it loads) and the breadcrumb ends in Readiness map. Deploy from this map writes a branch and a commit to the repository and builds on its Actions minutes. When the GitHub credential is rejected, the page shows the credential alert instead of a map."
 
   - id: deploy-templates
     kind: page
     menu: ['Delivery', 'Templates']
     route: /apps/templates
-    title: 'Flui Templates'
-    shows: 'Framework templates with a production-ready Dockerfile, each card showing its port, health check path and build tool. Filter by Frontend, Backend or Generic.'
+    title: 'Templates'
+    shows: 'A table of framework templates with production-ready Dockerfiles, with Template, Category, Port, Healthcheck and Build tool columns. A toolbar searches frameworks and filters by All, Frontend, Backend or Generic.'
     actions:
       [
-        'search frameworks',
-        'filter by category',
-        'use a template (opens Deploy New)',
-        'view the template on GitHub',
+        'Search frameworks',
+        'Filter by category',
+        'Use template (opens Deploy)',
+        'View on GitHub',
+        'Refresh',
       ]
     cli: ['flui template use', 'flui app init']
     mcp: ['template_list', 'template_get']
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:217',
-        'flui-dashboard/src/app/features/components/application/templates-catalog.component.ts:131',
-        'flui-dashboard/src/app/features/components/application/templates-catalog.component.ts:235',
-        'flui-dashboard/src/app/features/components/application/templates-catalog.component.ts:390',
+        'flui-dashboard/src/app/apps.routes.ts:233',
+        'flui-dashboard/src/app/features/components/application/templates-catalog.component.ts:49',
+        'flui-dashboard/src/app/features/components/application/templates-catalog.component.ts:125',
+        'flui-dashboard/src/app/features/components/application/templates-catalog-table.ts:20',
+        'flui-dashboard/src/app/features/components/application/templates-catalog-table.ts:60',
+        'flui-dashboard/src/app/features/components/application/templates-catalog-rows.ts:26',
       ]
-    notes: '"Use this template" is disabled until GitHub is connected with repo scope or the Flui GitHub App is installed. flui app init copies a template''s Dockerfile and flui.yaml into an existing repository, which matches the page''s "add it to your project" path rather than the button.'
+    notes: "The heading shows the template count. Use template is disabled until GitHub is connected with the repo scope or the Flui GitHub App is installed. flui app init copies a template's Dockerfile and flui.yaml into an existing repository; this page only starts a new repository from a template."
 
   - id: deploy-new
     kind: page
     menu: ['Delivery', 'Deploy']
     route: /apps/deploy/new
-    title: 'Deploy New Application'
-    shows: 'A step-by-step wizard that starts by choosing a source: a Flui template, a Docker image, an existing repository, or the Marketplace. Later steps cover the image or repository, environment variables and resources, the cluster, exposure and domain, and a final review.'
+    title: 'Deploy an application'
+    shows: 'A step-by-step wizard that starts with Source: From a Flui template, From a Docker image, From an existing repository or From the Marketplace. Later steps depend on the source (Template, Repo settings, Docker image, Repository, Analysis, Configuration or Env vars, App, Settings, Features, Dependencies, Domain), then Cluster and Review.'
     actions:
       [
-        'create a new repository from a template and deploy it',
-        'deploy a Docker image',
-        'deploy an existing repository from its flui.yaml',
-        'install a catalog app',
+        'Create a new repository from a template and deploy it',
+        'Deploy a Docker image',
+        'Deploy an existing repository from its flui.yaml',
+        'Install a catalog app',
+        'Previous, Next or Cancel',
+        'Deploy or Install',
       ]
     cli: ['flui deploy', 'flui template use', 'flui catalog install']
     mcp: ['app_deploy_image', 'app_deploy_from_yaml', 'app_install']
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:278',
-        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:177',
-        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:212',
-        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:260',
-        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:2162',
-        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:1803',
+        'flui-dashboard/src/app/apps.routes.ts:294',
+        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:37',
+        'flui-dashboard/src/app/features/components/application/deploy-step-source.ts:17',
+        'flui-dashboard/src/app/features/components/application/deploy-wizard-steps.ts:130',
+        'flui-dashboard/src/app/features/components/application/deploy-wizard.component.ts:431',
+        'flui-dashboard/src/app/features/components/application/deploy-wizard.state.ts:226',
+        'flui-dashboard/src/app/features/components/application/deploy-review-marketplace.ts:83',
       ]
-    notes: 'Steps vary by flow (template picker, Docker image, repository analysis, catalog overview, inputs, features, domain, dependencies). The final button reads Install for the Marketplace flow and Deploy Application otherwise. Deploy is blocked when the cluster lacks resources, and a catalog app with dedicated storage on a cluster with no worker node must be allowed to run on the control-plane node to continue.'
+    notes: '/apps/deploy redirects here. The final button reads Install for the Marketplace flow and Deploy otherwise. It is disabled when the cluster reports it cannot fit the deploy or the catalog app is not installable there, and a catalog app with node-local storage on a cluster with no worker node must be allowed to run on the control-plane node before Review is valid.'
 
   - id: infra-compute
     kind: page
     menu: ['Infrastructure', 'Compute']
     route: /infrastructure/compute
-    title: 'Compute Instances'
-    shows: 'The virtual machines Flui manages across providers, with status, region and IP address. Instances appear automatically when a cluster scales up.'
+    title: 'Compute instances'
+    shows: 'A table of the virtual machines across your providers with Instance, Status, Provider, Region, CPU, Memory, Disk, IPv4 and Ownership columns. Instances appear here when your clusters scale up.'
     actions:
       [
-        'search instances',
-        'filter by provider, status and region',
-        'copy an instance IP',
-        'open instance details',
+        'Search by name',
+        'Filter by Provider, Status and Region',
+        'Copy an IP address',
+        'View details',
+        'Refresh',
       ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:18',
-        'flui-dashboard/src/app/features/components/compute/compute-instances.component.ts:81',
-        'flui-dashboard/src/app/features/components/compute/instance-actions.component.ts:30',
+        'flui-dashboard/src/app/infrastructure.routes.ts:20',
+        'flui-dashboard/src/app/features/components/compute/compute-instances.component.ts:47',
+        'flui-dashboard/src/app/features/components/compute/compute-instances.component.ts:166',
+        'flui-dashboard/src/app/features/components/compute/instance-row.component.ts:56',
+        'flui-dashboard/src/app/features/components/compute/instance-actions.component.ts:6',
       ]
-    notes: 'Details is offered only for instances Flui manages; others show "No actions". flui node list and cluster_node_list list a cluster''s nodes, not this cross-provider instance view, so they are not listed.'
+    notes: "The instance name links to its details and View details appears only for instances Flui manages; other rows have no actions. flui node list and cluster_node_list list a cluster's nodes, not this cross-provider instance view, so they are not listed."
 
   - id: infra-costs
     kind: page
     menu: ['Operations', 'Costs']
     route: /infrastructure/costs
     title: 'Costs'
-    shows: 'What the machines and volumes of your clusters cost month by month, deleted clusters included: spent this month, expected by month end and last month, a per-provider table, and a per-cluster breakdown for each provider. Amounts exclude VAT.'
-    actions: ['choose how many months to show', 'refresh']
+    shows: 'What the machines and volumes of your clusters cost month by month, deleted clusters included: Spent this month, Expected by month end and last month, a By month table per provider, and one panel per provider with a Cluster, This month, Expected, Last month breakdown. Amounts exclude VAT.'
+    actions: ['Choose Last N months', 'Refresh']
     cli: ['flui costs']
     mcp: ['cost_overview']
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:10',
-        'flui-dashboard/src/app/features/components/costs/costs.component.ts:40',
+        'flui-dashboard/src/app/infrastructure.routes.ts:11',
+        'flui-dashboard/src/app/features/components/costs/costs.component.ts:37',
+        'flui-dashboard/src/app/features/components/costs/costs.component.ts:93',
+        'flui-dashboard/src/app/features/components/costs/costs.component.ts:114',
+        'flui-dashboard/src/app/features/components/costs/costs-provider-panel.ts:29',
       ]
 
   - id: infra-vnet
     kind: page
     menu: ['Infrastructure', 'Networks']
     route: /infrastructure/vnet
-    title: 'Virtual Networks'
-    shows: 'The Flui network card (which connects clusters on another provider to the control cluster) above a list of private networks with their provider, IP range, subnets and attached servers, plus totals.'
+    title: 'Networks'
+    shows: 'The Flui network panel (which connects clusters on another provider to the control cluster, with its control ends and members) above a table of private networks with Network, Status, Provider, IP range, Subnets, Servers and Labels columns.'
     actions:
       [
-        'create a VNet',
-        'switch the Flui network on or off',
-        'search and filter VNets by provider and status',
-        "open a VNet's details",
+        'Create network',
+        'Switch the Flui network on or off',
+        'Use public address or Release for a member cluster',
+        'Search and filter networks by Provider and Status',
+        "Open a network's details",
+        'Refresh',
       ]
     cli: ['flui network list', 'flui network create']
     mcp: ['management_network_status', 'management_network_set']
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:142',
-        'flui-dashboard/src/app/features/components/vnet/vnet-list.component.ts:85',
-        'flui-dashboard/src/app/features/components/vnet/vnet-list.component.ts:90',
-        'flui-dashboard/src/app/features/components/vnet/management-network-card.component.ts:83',
+        'flui-dashboard/src/app/infrastructure.routes.ts:140',
+        'flui-dashboard/src/app/features/components/vnet/vnet-list.component.ts:63',
+        'flui-dashboard/src/app/features/components/vnet/vnet-list.component.ts:182',
+        'flui-dashboard/src/app/features/components/vnet/management-network-card.component.html:6',
+        'flui-dashboard/src/app/features/components/vnet/management-network-card.component.html:217',
+        'flui-dashboard/src/app/features/components/vnet/management-network-card.component.ts:122',
       ]
-    notes: 'Create VNet is read-only gated (appReadOnlySection). The Flui network card also lets a manager move a cluster to its public address and release it; switching is confirmed inline.'
+    notes: 'The heading shows the network count. Create network is read-only gated (appReadOnlySection). Switching the Flui network is confirmed inline; Use public address and Release appear only for users with cluster:manage.'
 
   - id: infra-ssh-keys
     kind: page
     menu: ['Infrastructure', 'SSH keys']
     route: /infrastructure/keys
-    title: 'SSH Keys'
-    shows: 'The SSH keys used for server access, with name, fingerprint, the providers each key is synced to, and totals for total, active, recent and auto-generated keys.'
+    title: 'SSH keys'
+    shows: 'A table of the SSH keys used for server access with Name, Fingerprint, Type, Providers and Created columns; the header counts active, added this week and auto-generated keys.'
     actions:
       [
-        'add an SSH key (generated by the server)',
-        'sync a key to a provider or remove it from one',
-        'copy or download a key',
-        'delete one or several keys',
+        'Add SSH key (Generate key)',
+        'Sync to or Remove from a provider',
+        'Copy public key or Download public key',
+        'Delete key',
+        'Select keys and Delete selected',
+        'Refresh',
       ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:73',
-        'flui-dashboard/src/app/features/components/ssh-keys.component.ts:76',
-        'flui-dashboard/src/app/features/components/ssh-keys.component.ts:94',
-        'flui-dashboard/src/app/features/components/ssh-keys.component.ts:192',
+        'flui-dashboard/src/app/infrastructure.routes.ts:72',
+        'flui-dashboard/src/app/features/components/ssh-keys.component.ts:77',
+        'flui-dashboard/src/app/features/components/ssh-keys.component.ts:110',
+        'flui-dashboard/src/app/features/components/ssh-keys/ssh-keys-table.ts:52',
+        'flui-dashboard/src/app/features/components/ssh-keys/ssh-keys-rows.ts:100',
+        'flui-dashboard/src/app/features/components/ssh-keys/ssh-key-add-dialog.ts:126',
       ]
-    notes: 'The Add dialog offers "Import existing public key" but says import is not yet supported; only generating a new key pair works.'
+    notes: 'The Add SSH key dialog offers "Import an existing public key" but says import is not available yet; only generating a new key pair works.'
 
   - id: infra-domains
     kind: page
     menu: ['Infrastructure', 'Domains and DNS']
     route: /infrastructure/domains
-    title: 'DNS Zones'
-    shows: 'Three tabs. Registered Zones lists your DNS zones with provider, redundancy and the clusters using each one. Certificate Issuers shows, per cluster, the standard (HTTP-01) and wildcard certificate issuers. Internal Hosting shows, per cluster, whether internal apps reachable only through the dashboard are available and which requirements are met.'
+    title: 'Domains'
+    shows: 'Three tabs. Zones lists Registered zones with Zone, Provider, Redundancy, TTL, Used by, Description and Registered columns. Certificate issuers shows, for a chosen cluster, the Standard certificate issuers (HTTP-01) and Wildcard certificate issuers (DNS-01). Internal hosting shows, for a chosen cluster, whether internal apps are available and which requirements are met.'
     actions:
       [
-        'register a zone',
-        'manage provider redundancy for a zone',
-        'delete a zone',
-        'configure, reconfigure or delete certificate issuers for a cluster',
-        'check internal hosting requirements for a cluster',
+        'Register zone',
+        'Show redundancy, Add replica, Populate, Verify, Enable, Disable or Remove replica',
+        'Delete zone',
+        'Configure, Reconfigure or Delete certificate issuers for a cluster',
+        'Configure wildcard issuers',
+        'Check internal hosting requirements for a cluster',
       ]
     cli:
       [
@@ -1283,106 +1526,130 @@ entries:
     sources:
       [
         'flui-dashboard/src/app/infrastructure.routes.ts:81',
-        'flui-dashboard/src/app/features/components/dns/dns-shell.component.ts:58',
-        'flui-dashboard/src/app/features/components/dns/dns-zones-list.component.ts:142',
-        'flui-dashboard/src/app/features/components/dns/zone-replicas.component.ts:97',
-        'flui-dashboard/src/app/features/components/cluster/cluster-issuer-setup.component.ts:137',
-        'flui-dashboard/src/app/features/components/dns/dns-internal-hosting-tab.component.ts:45',
+        'flui-dashboard/src/app/features/components/dns/dns-shell.component.ts:13',
+        'flui-dashboard/src/app/features/components/dns/dns-zones-list.component.ts:70',
+        'flui-dashboard/src/app/features/components/dns/dns-zones-list.component.ts:321',
+        'flui-dashboard/src/app/features/components/dns/zone-replicas.component.html:1',
+        'flui-dashboard/src/app/features/components/dns/zone-replicas.component.ts:140',
+        'flui-dashboard/src/app/features/components/cluster/cluster-certificate-issuers.component.ts:55',
+        'flui-dashboard/src/app/features/components/cluster/cluster-issuer-setup.component.ts:53',
+        'flui-dashboard/src/app/features/components/dns/dns-internal-hosting-tab.component.ts:86',
       ]
-    notes: 'Delete is disabled while a zone is assigned to clusters. Register Zone and Delete are read-only gated. dns_internal_hosting calls the same endpoint as the Internal Hosting tab, though its MCP description frames it as DNS self-serving status. No CLI registers or deletes a zone.'
+    notes: '/infrastructure/domains opens the Zones tab (/zones); the other tabs are /issuers and /internal-hosting. Delete zone is disabled while a zone is assigned to clusters. Register zone and Delete zone are read-only gated, and deleting issuers needs cluster:manage. dns_internal_hosting calls the same endpoint as the Internal hosting tab, though its MCP description frames it as DNS self-serving status. No CLI registers or deletes a zone.'
 
   - id: infra-domains-register
     kind: subpage
     menu: null
     route: /infrastructure/domains/register
-    title: 'Register DNS Zone'
-    shows: 'A three-step form: pick a DNS-capable provider, pick one of its zones, add an optional description, and register it.'
-    actions: ['select a DNS provider', 'select a zone', 'register the zone']
+    title: 'Register DNS zone'
+    shows: 'A three-step wizard: Select provider (a DNS-capable provider), Select zone (one of its zones), and Confirm with an optional description.'
+    actions:
+      [
+        'Select a DNS provider',
+        'Select a zone',
+        'Register zone',
+        'Previous or Cancel',
+      ]
     cli: []
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:119',
-        'flui-dashboard/src/app/features/components/dns/dns-zone-register.component.ts:29',
+        'flui-dashboard/src/app/infrastructure.routes.ts:114',
+        'flui-dashboard/src/app/features/components/dns/dns-zone-register.component.html:2',
+        'flui-dashboard/src/app/features/components/dns/dns-zone-register.component.ts:21',
+        'flui-dashboard/src/app/features/components/dns/dns-zone-register.component.html:193',
       ]
 
   - id: infra-platform
     kind: page
     menu: ['Infrastructure', 'Platform']
     route: /infrastructure/platform-components
-    title: 'Platform Components'
-    shows: 'Live status of core system components across all clusters, grouped by cluster, with counts of healthy, degraded and missing components. Expanding a component shows its resources, replicas and errors.'
+    title: 'Platform components'
+    shows: 'Live status of core system components across all clusters: Healthy, Degraded and Missing counts and a table grouped by cluster with Component, Category, Status, Managed by, Errors and Created columns. Opening a component shows its resources (Resource, Namespace, Status, Replicas).'
     actions:
       [
-        'search and filter by status or cluster',
-        'expand a component',
-        'view its logs',
-        'redeploy a component',
+        'Search by name or category',
+        'Filter by Status and Cluster',
+        'Open a component',
+        'Logs',
+        'Redeploy',
+        'Refresh',
       ]
     cli: []
     mcp: ['platform_component_list', 'platform_component_redeploy']
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:129',
-        'flui-dashboard/src/app/features/components/platform-components/platform-components-list.component.ts:57',
-        'flui-dashboard/src/app/features/components/platform-components/platform-component-detail-panel.component.ts:197',
+        'flui-dashboard/src/app/infrastructure.routes.ts:124',
+        'flui-dashboard/src/app/features/components/platform-components/platform-components-list.component.ts:44',
+        'flui-dashboard/src/app/features/components/platform-components/platform-components-table.ts:23',
+        'flui-dashboard/src/app/features/components/platform-components/platform-component-detail-panel.component.ts:97',
+        'flui-dashboard/src/app/features/components/platform-components/platform-component-detail-panel.component.ts:226',
+        'flui-dashboard/src/app/features/components/platform-components/platform-components-list.component.ts:279',
       ]
-    notes: 'Redeploy appears only for components that support restart; the UI explains it "Triggers a rolling restart of workload resources". The logs dialog is titled "Pod Logs".'
+    notes: 'Redeploy appears only for components that support restart and asks for confirmation; it triggers a rolling restart of every workload resource of the component without changing its configuration or images. The logs dialog is titled "Pod logs".'
 
   - id: firewall-clusters
     kind: page
     menu: ['Infrastructure', 'Firewall']
     route: /infrastructure/firewall/clusters
-    title: 'Cluster Firewalls'
-    shows: 'Firewall rules for your clusters: one card per cluster with sync status, coverage, drift, node readiness, rule count and last reconciliation, plus totals for in sync, in progress, out of sync and coverage gaps.'
+    title: 'Cluster firewalls'
+    shows: 'Firewall rules for your clusters: Firewalls, In sync, In progress, Out of sync and Coverage gaps counts, and a table with Cluster, Status, Coverage, Cluster state, Nodes ready, Rules, Provider ID and Last reconciled columns.'
     actions:
       [
-        'search by cluster or firewall ID',
-        'filter by status and coverage',
-        'reconcile a firewall that drifted or failed',
-        "open a firewall's details",
-        'debug on provider',
+        'Search by cluster or firewall ID',
+        'Filter by Status and Coverage',
+        'Reconcile a firewall that drifted or failed',
+        "Open a firewall's details",
+        'Debug on provider',
+        'Refresh',
       ]
     cli: ['flui env firewall status', 'flui env firewall apply']
     mcp: ['cluster_firewall_enable']
     sources:
       [
-        'flui-dashboard/src/app/infrastructure.routes.ts:47',
-        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.html:5',
-        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.html:179',
-        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.ts:64',
+        'flui-dashboard/src/app/infrastructure.routes.ts:46',
+        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.html:2',
+        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.html:11',
+        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.html:106',
+        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.ts:42',
+        'flui-dashboard/src/app/features/components/firewall/firewall-cluster-management.component.ts:200',
       ]
-    notes: "Reconcile shows only on drift or error and, like Debug on provider, is read-only gated. The env firewall commands cover only the control cluster firewall. cluster_firewall_enable seeds or re-applies a cluster's firewall and asks a person first. The host firewall (flui cluster host-firewall, cluster_host_firewall_set) is not on this page."
+    notes: "/infrastructure/firewall redirects here. Reconcile shows only on drift or error and, like Debug on provider (/infrastructure/firewall/provider-firewalls, for debugging only), is read-only gated. The env firewall commands cover only the control cluster firewall. cluster_firewall_enable seeds or re-applies a cluster's firewall and asks a person first. The host firewall (flui cluster host-firewall, cluster_host_firewall_set) is not on this page."
   - id: mgmt-now
     kind: page
     menu: ['Operations', 'Live']
     route: /management/now
-    title: 'Now'
-    shows: "A live screen of what runs out first under a crowd: firing alerts, requests at each cluster (requests per second, surges, rate-limited and server errors over 10 minutes), each node's CPU, memory, link and month-at-this-pace, platform components with restarts in the last hour, and image registry traffic for the last hour. On a demo installation it also shows demo spaces in use, ready, waiting and turned away."
+    title: 'Live'
+    shows: 'What runs out first under a crowd: firing alerts, a Requests at the door table per cluster (Req/s now and before, surges, Rate-limited and Server errors over 10 minutes), a Nodes table (CPU, memory, Link out · in, Month at this pace), Platform components with restarts in the last hour, and Image registry, last hour. On a demo installation a Demo panel shows spaces in use, ready, waiting and turned away.'
     actions: ['Pause or resume the live refresh']
     cli: ['flui now']
     mcp: ['installation_now']
     sources:
       [
-        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:55',
-        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:155',
-        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:191',
-        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:244',
-        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:275',
+        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:50',
+        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:65',
+        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:72',
+        'flui-dashboard/src/app/features/components/installation-now/installation-now.component.ts:101',
+        'flui-dashboard/src/app/features/components/installation-now/now-traffic.ts:30',
+        'flui-dashboard/src/app/features/components/installation-now/now-traffic.ts:80',
+        'flui-dashboard/src/app/features/components/installation-now/now-platform.ts:18',
+        'flui-dashboard/src/app/features/components/installation-now/now-platform.ts:82',
       ]
-    notes: "Amber and red thresholds come from the installation's settings. A refusal message is shown when the viewer may not read this screen."
+    notes: 'Menu label and page heading are "Live". Amber and red thresholds come from the installation''s settings. A "Live figures unavailable" message is shown when the viewer may not read this screen.'
 
   - id: mgmt-providers
     kind: page
     menu: ['Administration', 'Providers']
     route: /management/providers
-    title: 'Cloud providers'
-    shows: 'The cloud accounts Flui creates your machines on, with summary tiles and a searchable list filterable by status (connected, not connected, needs attention, disabled) and sign-in type. Choosing a provider opens a configuration wizard to connect it.'
+    title: 'Providers'
+    shows: 'The accounts Flui creates your machines on: a summary line (connected, needing attention, regions enabled) and a table of providers (Provider, Account, Credentials, Sign-in, Regions, Clusters, From, Last checked) with search and Status and Sign-in filters.'
     actions:
       [
         'Search and filter providers',
-        'Connect a provider through the configuration wizard',
-        'Refresh the list',
+        "Connect provider (header menu, or Connect in a row's actions menu) through the Credentials, Check the connection and Pick regions steps",
+        'Manage a connected provider',
+        'Open documentation',
+        'Refresh',
       ]
     cli:
       [
@@ -1394,45 +1661,58 @@ entries:
     mcp: ['provider_credentials_request']
     sources:
       [
-        'flui-dashboard/src/app/features/components/provider/providers-management.component.ts:45',
-        'flui-dashboard/src/app/features/components/provider/providers-overview.component.ts:36',
-        'flui-dashboard/src/app/features/components/provider/providers-overview.component.ts:80',
+        'flui-dashboard/src/app/features/components/provider/providers-overview.component.ts:38',
+        'flui-dashboard/src/app/features/components/provider/providers-overview.component.ts:53',
+        'flui-dashboard/src/app/features/components/provider/providers-overview.component.ts:61',
+        'flui-dashboard/src/app/features/components/provider/providers-overview.component.ts:129',
+        'flui-dashboard/src/app/features/components/provider/provider-card.component.ts:132',
+        'flui-dashboard/src/app/features/components/provider/provider-configuration-wizard.component.ts:212',
+        'flui-dashboard/src/app/features/components/provider/providers-management.component.ts:125',
       ]
-    notes: 'A ?configure=<provider> query parameter opens the wizard directly. The CLI stores provider tokens through config set; the MCP tool only asks a person to supply the credential.'
+    notes: 'The heading shows the number of available providers, e.g. "Providers (N)". A ?configure=<provider> query parameter opens the connect wizard directly. A demo guest walks every wizard step but nothing is validated or stored. The CLI stores provider tokens through config set; the MCP tool only asks a person to supply the credential.'
 
   - id: mgmt-provider-manage
     kind: subpage
     menu: null
     route: /management/providers/:id
-    title: 'Manage Provider'
-    shows: "One provider's credentials, regions, AI model settings, health and metadata, or a Connect button if it is not connected yet."
+    title: '<provider name>'
+    shows: 'One provider, headed by its name and status: Credentials, Health, Enabled regions, Inference (endpoint, data residency, models) when the provider offers models, and Details. If it is not connected yet it shows Not connected with a Connect button.'
     actions:
       [
-        'Enable or disable the provider',
-        'Run a health check',
-        'Remove the configuration',
+        'Run health check',
+        'Enable provider or Disable provider (Actions menu)',
+        'Disconnect (Actions menu, with confirmation)',
+        'Rotate credentials or Save expiry',
+        'Test inference',
+        'Connect <provider> when not connected',
       ]
     cli: ['flui config test', 'flui config remove']
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:121',
-        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:202',
-        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:212',
+        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:80',
+        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:108',
+        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:134',
+        'flui-dashboard/src/app/features/components/provider/provider-manage.component.ts:200',
+        'flui-dashboard/src/app/features/components/provider/provider-credentials-panel.component.ts:66',
+        'flui-dashboard/src/app/features/components/provider/provider-regions-panel.component.ts:18',
+        'flui-dashboard/src/app/features/components/provider/provider-inference-panel.component.ts:17',
       ]
-    notes: 'Buttons are disabled in read-only access to the providers section.'
+    notes: 'Reached from Manage in a provider row on Providers. Run health check and the Actions menu are gated by read-only access to the providers section.'
 
   - id: mgmt-backup
     kind: page
     menu: ['Operations', 'Backups']
     route: /management/backup
-    title: 'Backup & Restore'
-    shows: 'What you can protect (a cluster, a database, Flui itself), backups that need attention, a protection card per cluster, overview counts (destinations, policies, total storage, restore jobs), the platform backup card for Flui itself, and links to destinations, policies, jobs and restores.'
+    title: 'Backups'
+    shows: 'Backups needing attention, figures for Protected clusters, Apps needing a decision, Failed jobs and Destinations, a Clusters table (Protection, Destination, Schedule, Before deploy, Apps), a Needs a decision list of volumes no backup can copy safely yet, the Flui itself panel for the platform backup, and What each backup covers and Backup setup panels linking to destinations, policies, jobs and restores.'
     actions:
       [
-        'Enable backups on a cluster (Flui can create the bucket on another cloud in the same step)',
-        'Review backups that need attention',
-        'Set up the platform backup of Flui itself',
+        'Enable backups on a selected cluster (Flui can create the bucket on another cloud in the same step)',
+        'Protect this cluster, or Stop protecting new apps',
+        'Stop the app during each copy, or Leave it out, for a volume that needs a decision',
+        'Back up now (platform backup)',
+        "Set or stop the dead-man's switch heartbeat URL",
         'Open destinations, policies, jobs or restores',
       ]
     cli:
@@ -1446,26 +1726,33 @@ entries:
     mcp: ['backup_status', 'backup_coverage', 'backup_cluster_protection']
     sources:
       [
-        'flui-dashboard/src/app/management.routes.ts:98',
-        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.ts:47',
-        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.ts:106',
-        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.ts:146',
-        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.ts:289',
+        'flui-dashboard/src/app/management.routes.ts:90',
+        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.html:2',
+        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.html:35',
+        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.html:71',
+        'flui-dashboard/src/app/features/components/backup/cluster-protection/cluster-protection-card.component.ts:135',
+        'flui-dashboard/src/app/features/components/backup/cluster-protection/needs-decision-list.component.ts:21',
+        'flui-dashboard/src/app/features/components/backup/platform/platform-backup-card.component.ts:55',
+        'flui-dashboard/src/app/features/components/backup/platform/platform-backup-card.component.ts:220',
+        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview-guide.ts:58',
+        'flui-dashboard/src/app/features/components/backup/backup-overview/backup-overview.component.ts:68',
       ]
-    notes: "/management/backup redirects to /management/backup/overview. Database backups are turned on from the database's own Backup tab. A demo guest sees an example world without real clusters or the platform card."
+    notes: "/management/backup redirects to /management/backup/overview. When the platform backup is not set up, the Flui itself panel points to flui backup platform init and flui backup enable platform. Database backups are turned on from the database's own Backup tab. A demo guest sees an example world without the Clusters table, the decision list or the Flui itself panel. Write controls follow the backup section's read-only gate."
 
   - id: mgmt-backup-sections
     kind: subpage
     menu: null
     route: /management/backup/destinations
     title: 'Backup destinations, policies, jobs and restores'
-    shows: 'Sub-pages of Backup: destinations (S3-compatible storage with health and usage), policies (per app and engine, filterable by cluster, with schedule and health), backup jobs (run history per cluster) and restore jobs.'
+    shows: 'Sub-pages of Backups: Backup destinations (Name, Type, Region, Bucket, Reachability, Usage), Backup policies (Policy, Cluster, Scope, Schedule, Retention, Destination, Health, Last run, Next run, Status, filterable by cluster), Backup jobs (run history for a chosen cluster, filterable by outcome) and Restores (database restores with Target, Cluster, Backup, Created, Status).'
     actions:
       [
-        'Add an external S3 destination, test it or refresh its usage',
-        'Create a policy',
-        'Pick a cluster to see its backup jobs',
-        'Open how to restore',
+        'Add external S3',
+        'Test connection, Refresh usage or Delete a destination',
+        'New policy',
+        'Choose a cluster to see its backup jobs',
+        'How to restore',
+        'Search, filter and Refresh',
       ]
     cli:
       [
@@ -1486,26 +1773,29 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/management.routes.ts:108',
-        'flui-dashboard/src/app/features/components/backup/destinations/destinations-list.component.ts:31',
-        'flui-dashboard/src/app/features/components/backup/policies/policies-list.component.ts:46',
-        'flui-dashboard/src/app/features/components/backup/jobs/jobs-list.component.ts:26',
-        'flui-dashboard/src/app/features/components/backup/restore/restore-list.component.ts:26',
+        'flui-dashboard/src/app/management.routes.ts:100',
+        'flui-dashboard/src/app/features/components/backup/destinations/destinations-list.component.ts:54',
+        'flui-dashboard/src/app/features/components/backup/destinations/destinations-list.component.ts:244',
+        'flui-dashboard/src/app/features/components/backup/policies/policies-list.component.ts:48',
+        'flui-dashboard/src/app/features/components/backup/policies/policies-list-table.ts:18',
+        'flui-dashboard/src/app/features/components/backup/jobs/jobs-list.component.ts:63',
+        'flui-dashboard/src/app/features/components/backup/restore/restore-list.component.ts:57',
       ]
-    notes: 'Routes: destinations, destinations/new, destinations/:id, policies, policies/new, policies/:id, jobs, jobs/:id, restore, restore/new, restore/:id. Detail and wizard pages were not read in depth.'
+    notes: 'Routes: destinations, destinations/new, destinations/:id, policies, policies/new, policies/:id, jobs, jobs/:id, restore, restore/new, restore/:id. The destinations page also suggests Enable backups on the Backups page for one-click Scaleway backups. Detail and wizard pages were not read in depth.'
 
   - id: mgmt-registry
     kind: page
     menu: ['Delivery', 'Image registry']
     route: /management/registry
     title: 'Image registry'
-    shows: 'Where the images Flui builds for your applications are kept: the storage location, space in use with a space alert, traffic (pulls, pushes, data out and in) over selectable windows, and the largest applications. When builds still push to GitHub Container Registry, it offers to switch to the Flui registry on a volume or a bucket.'
+    shows: 'Where the images Flui builds for your applications are kept: a Storage panel (where images are kept, backend, space in use, with a Space alert), Traffic (pulls, pushes, data pulled out and pushed in) over a selectable window, Largest applications, the Bucket panel and any Replaced buckets. When builds still push to GitHub Container Registry, it offers to use the Flui registry on a volume or a bucket.'
     actions:
       [
-        'Measure space now',
-        'Use the Flui registry (volume or bucket)',
-        'Create a bucket on Scaleway or connect a bucket of your own',
-        'Replace or remove a bucket',
+        'Measure now',
+        'Use the Flui registry (Volume or Bucket)',
+        'Create bucket on Scaleway or Connect bucket of your own',
+        'Replace bucket',
+        'Remove a replaced bucket',
         'Send new builds back to GitHub Container Registry',
       ]
     cli:
@@ -1522,27 +1812,31 @@ entries:
     mcp: ['registry_storage_request', 'registry_traffic']
     sources:
       [
-        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:73',
-        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:95',
-        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:226',
-        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:386',
-        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:533',
-        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:703',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:58',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:72',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:128',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:136',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:146',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:167',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-storage.component.ts:206',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-bucket-panel.ts:43',
+        'flui-dashboard/src/app/features/components/registry-storage/registry-replaced-buckets.ts:16',
       ]
-    notes: 'The traffic section can be hidden. A bucket connected while the registry is on a volume is used only once the installation moves to object storage.'
+    notes: 'The Traffic panel is hidden when the viewer may not read registry traffic. A bucket connected while the registry is on a volume is used only once the installation moves to object storage. Replacing a bucket and switching back to GitHub go through a confirmation dialog.'
 
   - id: mgmt-migrations
     kind: page
     menu: ['Operations', 'Migrations']
     route: /management/migrations
     title: 'Migrations'
-    shows: 'Moves of workloads, managed databases and full apps across clusters, listed with type, status, source and target, cutover and time, plus next steps and errors per row.'
+    shows: 'Moves of workloads, managed databases and full apps across clusters, in a table with What moves, From, To, Status, Cutover, Created and Duration, plus Next steps per row.'
     actions:
       [
-        'Start a new migration',
-        'Fire the cutover',
-        'Abort a migration',
-        'Destroy the source after cutover',
+        'New migration (App, Database or Full app)',
+        'Cutover or Resume cutover',
+        'Abort (row actions menu)',
+        'Destroy source (row actions menu)',
+        'Refresh',
       ]
     cli:
       [
@@ -1574,24 +1868,28 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/migration/migrations-list.component.ts:83',
-        'flui-dashboard/src/app/features/components/migration/migrations-list.component.ts:110',
-        'flui-dashboard/src/app/features/components/migration/migrations-list.component.ts:141',
+        'flui-dashboard/src/app/features/components/migration/migrations-list.component.ts:62',
+        'flui-dashboard/src/app/features/components/migration/migrations-list.component.ts:75',
+        'flui-dashboard/src/app/features/components/migration/migrations-list.component.ts:204',
+        'flui-dashboard/src/app/features/components/migration/migrations-table.ts:31',
+        'flui-dashboard/src/app/features/components/migration/migrations-table.ts:49',
+        'flui-dashboard/src/app/features/components/migration/migrations-table.ts:119',
+        'flui-dashboard/src/app/features/components/migration/migration-launch-options.ts:15',
       ]
-    notes: "Write buttons use the backup section's read-only gate. Destructive actions go through a confirmation dialog."
+    notes: "New migration uses the backup section's read-only gate. Cutover and destructive actions go through a confirmation dialog."
 
   - id: mgmt-mail
     kind: page
     menu: ['Operations', 'Mail']
     route: /management/mail
     title: 'Mail'
-    shows: 'The state of sending for a chosen time window: any incident, key figures, volume by outcome, sending domains and senders with sent and delivered counts. Section tabs lead to Activity, Domains, Suppressions, Providers and Setup.'
+    shows: "Whether your applications' mail is arriving for a chosen time window: any incident, key figures, Volume by outcome, a Domains table (SPF, DKIM, DMARC, Verification, Sent) and a Senders table (Sent, Delivered, Status). Tabs lead to Overview, Activity, Domains, Suppressions, Providers and Setup."
     actions:
       [
         'Pick a time window',
         'Refresh',
-        'Manage sending domains or set one up',
-        'Open activity, suppressions, providers or setup',
+        'Manage sending domains, or Set one up',
+        'Open Activity, Domains, Suppressions, Providers or Setup',
       ]
     cli:
       [
@@ -1615,26 +1913,29 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/mail.routes.ts:3',
-        'flui-dashboard/src/app/features/components/mail/mail-section-nav.component.ts:21',
-        'flui-dashboard/src/app/features/components/mail/mail-overview.component.ts:188',
-        'flui-dashboard/src/app/features/components/mail/mail-overview.component.ts:195',
-        'flui-dashboard/src/app/features/components/mail/mail-overview.component.ts:250',
+        'flui-dashboard/src/app/mail.routes.ts:4',
+        'flui-dashboard/src/app/features/components/mail/mail-section-nav.component.ts:12',
+        'flui-dashboard/src/app/features/components/mail/mail-section-nav.component.ts:25',
+        'flui-dashboard/src/app/features/components/mail/mail-overview.component.ts:52',
+        'flui-dashboard/src/app/features/components/mail/mail-overview.component.ts:108',
+        'flui-dashboard/src/app/features/components/mail/mail-overview-panels.ts:40',
+        'flui-dashboard/src/app/features/components/mail/mail-overview-panels.ts:113',
       ]
-    notes: '/management/mail redirects to overview. Subroutes: activity, domains, suppressions, providers, setup; their pages were not read in depth.'
+    notes: '/management/mail redirects to overview. The Setup tab shows the number of items to fix when there are any. The Activity, Domains, Suppressions, Providers and Setup pages were not read in depth.'
 
   - id: mgmt-github-setup
     kind: page
     menu: ['Administration', 'GitHub app']
     route: /apps/repositories/github-setup
-    title: 'Setup GitHub Integration'
-    shows: "A one-time wizard (Choose Method, Configure, Done) for how Flui connects to GitHub: a Personal Access Token pasted by each person, or a GitHub App created on GitHub with one click (or an existing App's credentials). If GitHub is already configured it shows the active method and a Reset button."
+    title: 'Set up GitHub'
+    shows: "A wizard (Choose a method, Configure, Done) for how Flui connects to GitHub: a Personal access token pasted by each person, or a GitHub App created on GitHub with one click (or an existing App's credentials). If GitHub is already configured it says so and offers Reset."
     actions:
       [
-        'Choose Personal Access Token or GitHub App',
-        'Create a token on GitHub and validate it',
-        'Create a GitHub App with webhooks for deploy-on-push, or paste an existing App',
+        'Choose Personal access token or GitHub App',
+        'Create a token on GitHub, then Validate it',
+        'Create a GitHub App (optionally with webhooks for deploy on push), or I already have a GitHub App',
         'Reset the integration',
+        'Go to repositories when done',
       ]
     cli:
       [
@@ -1645,28 +1946,33 @@ entries:
     mcp: ['github_setup', 'integration_status']
     sources:
       [
-        'flui-dashboard/src/app/apps.routes.ts:199',
-        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:93',
-        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:116',
-        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:146',
-        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:395',
-        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:551',
+        'flui-dashboard/src/app/apps.routes.ts:214',
+        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:47',
+        'flui-dashboard/src/app/features/components/application/github-setup-wizard.component.ts:193',
+        'flui-dashboard/src/app/features/components/application/github-setup-method-step.ts:16',
+        'flui-dashboard/src/app/features/components/application/github-setup-method-step.ts:48',
+        'flui-dashboard/src/app/features/components/application/github-setup-pat-step.ts:20',
+        'flui-dashboard/src/app/features/components/application/github-setup-app-step.ts:116',
+        'flui-dashboard/src/app/features/components/application/github-setup-app-step.ts:139',
       ]
-    notes: 'Only classic tokens are supported. github_setup configures the GitHub App path only.'
+    notes: 'Only classic tokens are supported. Reset asks for confirmation. github_setup configures the GitHub App path only.'
 
   - id: mgmt-access
     kind: page
     menu: ['Administration', 'Access']
     route: /management/access
     title: 'Access'
-    shows: 'Who can do what, on which resources, deny by default. Tabs: Grants (grants made in Flui with role, what, applies to and end date), People, Groups, Roles, Temporary access and Activity.'
+    shows: 'Who can do what, on which resources. Tabs: Grants (a New grant builder and Grants made in Flui with Who, Role, What, Applies to, Ends), People, Groups, Roles (with a Permissions matrix), Temporary access and Activity.'
     actions:
       [
-        'Add a grant (person or group, role, scope)',
+        'How access works',
+        'Add grant (person or group, role, scope)',
         'Remove a grant',
-        'Invite a user with a link or a temporary password',
-        'Create groups and add members',
-        'Review temporary access and activity',
+        'Invite user, with a link or a temporary password',
+        "Change a person's global access",
+        'New group, add members, delete a group',
+        'Give temporary access, or Revoke it',
+        'Review activity',
       ]
     cli:
       [
@@ -1692,47 +1998,57 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/management.routes.ts:38',
-        'flui-dashboard/src/app/features/components/access/access.component.ts:93',
-        'flui-dashboard/src/app/features/components/access/access.component.ts:298',
-        'flui-dashboard/src/app/features/components/access/people-tab.component.html:15',
-        'flui-dashboard/src/app/features/components/access/groups-tab.component.ts:66',
+        'flui-dashboard/src/app/management.routes.ts:39',
+        'flui-dashboard/src/app/features/components/access/access.component.ts:73',
+        'flui-dashboard/src/app/features/components/access/access.component.ts:220',
+        'flui-dashboard/src/app/features/components/access/access.component.ts:239',
+        'flui-dashboard/src/app/features/components/access/access-grants.ts:39',
+        'flui-dashboard/src/app/features/components/access/grant-builder.component.html:1',
+        'flui-dashboard/src/app/features/components/access/people-tab.component.html:5',
+        'flui-dashboard/src/app/features/components/access/groups-tab.component.ts:62',
+        'flui-dashboard/src/app/features/components/access/temporary-access-tab.component.ts:63',
+        'flui-dashboard/src/app/features/components/access/activity-tab.component.ts:49',
       ]
-    notes: '/management/access redirects to access/grants; route is access/:tab with tabs grants, people, groups, roles, temporary, activity. Adding and removing grants needs the iam:assign-role permission. The Activity tab was matched to audit tools by its heading only.'
+    notes: '/management/access redirects to access/grants; route is access/:tab with tabs grants, people, groups, roles, temporary, activity. Adding, removing and revoking grants and creating groups need the iam:assign-role permission; without it the Grants tab says it is read only. Invite user needs iam:manage-users. Grants conferred in an identity provider are not listed. The Activity tab was matched to audit tools by its heading only.'
 
   - id: mgmt-projects
     kind: page
     route: /management/projects
     title: 'Projects'
-    shows: 'Where applications live: each project with its color, short name, app count, a personal badge for personal projects and its apps. Apps of one project share their building blocks.'
+    shows: 'Where applications live: a searchable table of projects with Project (and a personal tag for personal projects), Slug, Description, Workloads and Clusters. An app shares building blocks with its project and stays there.'
     actions:
       [
-        'Create a project with a name, description and color',
-        'Delete a project',
+        'Create project with a name, description and color',
+        'Edit project',
+        'Delete project (only when it holds no workloads)',
+        'Refresh',
       ]
     cli: ['flui project list', 'flui project create', 'flui project delete']
     mcp: ['project_list']
     sources:
       [
-        'flui-dashboard/src/app/features/components/projects/projects.component.ts:54',
-        'flui-dashboard/src/app/features/components/projects/projects.component.ts:61',
-        'flui-dashboard/src/app/features/components/projects/projects.component.ts:105',
-        'flui-dashboard/src/app/features/components/projects/projects.component.ts:132',
+        'flui-dashboard/src/app/features/components/projects/projects.component.ts:40',
+        'flui-dashboard/src/app/features/components/projects/projects.component.ts:87',
+        'flui-dashboard/src/app/features/components/projects/projects.component.ts:104',
+        'flui-dashboard/src/app/features/components/projects/projects.component.ts:152',
+        'flui-dashboard/src/app/features/components/projects/projects.component.ts:225',
+        'flui-dashboard/src/app/features/components/projects/projects.component.ts:337',
+        'flui-dashboard/src/app/features/components/projects/project-form.component.ts:23',
       ]
-    notes: 'Create needs access to the projects section (canManage). Rename exists in the CLI but no rename control was seen on this page.'
+    notes: 'Create, edit and delete need access to the projects section (canManage). A project name links to Workloads > Projects filtered to that project. Delete is disabled with the hint "Holds applications" while the project still has workloads, and asks for confirmation.'
 
   - id: mgmt-updates
     kind: page
     menu: ['Administration', 'Updates']
     route: /management/updates
     title: 'Updates'
-    shows: 'The Flui release running on this installation (API, dashboard and authorization service), whether an update is available with its release notes, the progress of an update in flight, details, and update history.'
+    shows: 'The Flui release running on this installation and when it was last checked, an Available update panel (version, installed version, release date, database migrations, CLI and release notes), the progress of an update in flight, a Components table (Role, Version, Change) and Update history.'
     actions:
       [
-        'Check for updates now',
+        'Check now',
         'Update now (with a confirmation step)',
-        'Resume an interrupted update',
-        'Show details',
+        'Resume the update',
+        'Show details or Hide details',
       ]
     cli: ['flui env upgrade']
     mcp:
@@ -1743,60 +2059,69 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.ts:56',
-        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.ts:79',
-        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.ts:95',
-        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.ts:159',
-        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.ts:213',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.html:2',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.html:15',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.html:28',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.html:46',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-updates.component.html:53',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-update-details.component.ts:20',
+        'flui-dashboard/src/app/features/components/platform-updates/platform-update-history.component.ts:14',
       ]
-    notes: 'When an update cannot be applied from the dashboard it shows a "Needs the CLI" badge with a Why? link. flui update updates the CLI itself, not the installation, so it is not listed.'
+    notes: 'The heading carries a status: Updating, Not checked, Update available or Up to date. When an update cannot be applied from the dashboard it shows a "Needs the CLI" badge with a Why? button that opens the details. flui update updates the CLI itself, not the installation, so it is not listed.'
 
   - id: mgmt-operating-context
     kind: page
     menu: ['Help menu', 'How Flui is run']
     route: /management/operating-context
     title: 'How this installation is run'
-    shows: 'Notes written by the people who run this installation about local conventions, marked as advice and not permissions, with the Flui network status line. Notes are grouped into those asking to be re-read, where two notes disagree, what still holds, and retired notes, and you can focus on what reaches a given application or cluster.'
+    shows: 'Notes written by the people who run this installation about local conventions, marked as advice and not permissions, with the Flui network status line and a What reaches a given thing panel. Tabs: Needs a look (notes asking to be re-read and where two notes disagree), In force (what still holds) and Retired.'
     actions:
       [
         'Write a note',
-        'Show what reaches an application or cluster',
-        'Confirm a note is still true, reword it or retire it',
+        'Show what reaches it (an application slug and/or a cluster), or Everything again',
+        'Still true, put my name to it',
+        'Reword',
+        'Retire',
       ]
     cli: ['flui operating-context list', 'flui operating-context write']
     mcp: ['operating_context_read']
     sources:
       [
-        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.ts:83',
-        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.ts:102',
-        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.ts:139',
-        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.ts:227',
-        'flui-dashboard/src/app/features/components/operating-context/context-note-card.component.ts:194',
+        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.html:2',
+        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.html:21',
+        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.html:27',
+        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.html:30',
+        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.html:91',
+        'flui-dashboard/src/app/features/components/operating-context/operating-context.component.ts:91',
+        'flui-dashboard/src/app/features/components/operating-context/context-note-card.component.ts:140',
       ]
-    notes: 'With no notes yet the page shows an empty state with an example and a Write the first note button.'
+    notes: 'With no notes yet the page shows "Nothing has been written down yet" with an example and a Write the first note button. When the viewer may not write here, the write buttons are replaced by an explanation and the Retired tab content is not shown.'
 
   - id: mgmt-agents
     kind: page
     menu: ['Administration', 'Agents']
     route: /agents
     title: 'Agents'
-    shows: 'What your agents are asking to do, what they may already do, and what they have done: a Connect an agent panel, requests waiting on you, permissions granted permanently, and an activity log. An agent can never do more than you can.'
+    shows: 'What your agents ask to do, what they may already do, and what they did: a Connect an agent panel, a reminder that an agent can never do more than you can, Waiting on you, Granted permanently (What it can do, On what, Granted, Last used) and an Activity log.'
     actions:
       [
-        'Allow a request once or always, or deny it',
+        'Allow once, Allow always or Deny a request',
         'Revoke a permanent permission',
         'Connect an agent',
-        'Configure a key in Settings',
+        'Configure key (opens Settings > Agent keys)',
       ]
     cli: []
     mcp: []
     sources:
       [
         'flui-dashboard/src/app/agents.routes.ts:3',
-        'flui-dashboard/src/app/features/components/agents/agents.component.ts:67',
-        'flui-dashboard/src/app/features/components/agents/agents.component.ts:110',
-        'flui-dashboard/src/app/features/components/agents/agent-request-card.component.ts:142',
-        'flui-dashboard/src/app/features/components/agents/agent-concessions-table.component.ts:71',
+        'flui-dashboard/src/app/features/components/agents/agents.component.ts:63',
+        'flui-dashboard/src/app/features/components/agents/agents.component.ts:68',
+        'flui-dashboard/src/app/features/components/settings/agent-keys/connect-agent.component.ts:72',
+        'flui-dashboard/src/app/features/components/agents/agent-requests-panel.ts:13',
+        'flui-dashboard/src/app/features/components/agents/agent-request-card.component.ts:56',
+        'flui-dashboard/src/app/features/components/agents/agent-concessions-table.component.ts:14',
+        'flui-dashboard/src/app/features/components/agents/agent-activity-log.component.ts:29',
       ]
     notes: '/agents/requests and /agents/requests/:proposalId render the same component; the latter is where approval links from agents land. No CLI or MCP tool answers a request; agents only receive approval_required with a link.'
 
@@ -1805,13 +2130,13 @@ entries:
     menu: ['Administration', 'Settings']
     route: /settings
     title: 'Settings'
-    shows: 'Your settings in tabs: Profile, Security, Agent keys, Auth Proxy (protect internal apps with sign-in per cluster), LLM Connections (bring your own key for an OpenAI-compatible model, with usage) and Demo sign-in (GitHub or Google sign-in for demo guests, with visitors).'
+    shows: 'Your settings in tabs: Profile, Security (Change password), Agent keys (issue a key and Keys you have issued), Auth proxy (protect internal apps with OIDC-based access per cluster), LLM connections (bring your own key for an OpenAI-compatible model, with Usage in the last 7 days) and Demo sign-in (GitHub or Google sign-in for demo guests, with Visitors).'
     actions:
       [
         'Edit your profile',
-        'Change your password',
-        'Create and revoke agent keys',
-        'Connect an LLM provider and see its usage',
+        'Change password',
+        'Create key and Revoke agent keys',
+        'Add connection, Validate or remove an LLM connection',
       ]
     cli:
       [
@@ -1830,23 +2155,27 @@ entries:
       ]
     sources:
       [
-        'flui-dashboard/src/app/app.routes.ts:141',
-        'flui-dashboard/src/app/features/components/settings/settings.component.ts:147',
-        'flui-dashboard/src/app/features/components/settings/settings.component.ts:228',
-        'flui-dashboard/src/app/layout/console/console-topbar.ts:99',
+        'flui-dashboard/src/app/app.routes.ts:150',
+        'flui-dashboard/src/app/features/components/settings/settings.component.ts:64',
+        'flui-dashboard/src/app/features/components/settings/settings.component.ts:151',
+        'flui-dashboard/src/app/features/components/settings/agent-keys/agent-keys.component.ts:56',
+        'flui-dashboard/src/app/features/components/settings/agent-keys/agent-key-mint.component.ts:195',
+        'flui-dashboard/src/app/features/components/settings/inference-connections.component.ts:69',
+        'flui-dashboard/src/app/features/components/settings/inference-usage.component.ts:27',
+        'flui-dashboard/src/app/layout/console/console-topbar.ts:101',
       ]
-    notes: 'Also reachable from the user menu. Security shows only with local sign-in, Auth Proxy only for admins, Demo sign-in only on a demo installation for people with sandbox:operate. Agent key and auth proxy child components were not read in depth.'
+    notes: 'Also reachable from the user menu. Security shows only with local sign-in, Auth proxy only for admins, Demo sign-in only on a demo installation for people with sandbox:operate. The Auth proxy and Demo sign-in tabs were not read in depth.'
 
   - id: user-account
     kind: page
     menu: ['User menu', 'Account']
     route: /account
     title: 'Account'
-    shows: 'Your own account in two tabs: Profile (first, last and display name, email) and Security (password, authenticator app, passkeys and security keys, linked accounts).'
+    shows: 'Your profile and how you sign in, as panels on one page: Profile (email and its verification), Name (first, last and display name), Password, Authenticator app, Passkeys and security keys (when you have any) and Linked accounts.'
     actions:
       [
-        'Change your name',
-        'Change your password',
+        'Save your name',
+        'Change password',
         'Set up or remove an authenticator app',
         'Remove a passkey or a linked sign-in',
       ]
@@ -1862,11 +2191,13 @@ entries:
     mcp: []
     sources:
       [
-        'flui-dashboard/src/app/app.routes.ts:133',
-        'flui-dashboard/src/app/features/components/account/account.component.ts:44',
-        'flui-dashboard/src/app/features/components/account/account-security.component.ts:97',
-        'flui-dashboard/src/app/features/components/account/account-security.component.ts:140',
-        'flui-dashboard/src/app/features/components/account/account-security.component.ts:187',
-        'flui-dashboard/src/app/features/components/account/account-security.component.ts:210',
+        'flui-dashboard/src/app/app.routes.ts:144',
+        'flui-dashboard/src/app/features/components/account/account.component.ts:36',
+        'flui-dashboard/src/app/features/components/account/account.component.ts:41',
+        'flui-dashboard/src/app/features/components/account/account-profile.component.ts:36',
+        'flui-dashboard/src/app/features/components/account/account-security.component.html:33',
+        'flui-dashboard/src/app/features/components/account/account-security.component.html:108',
+        'flui-dashboard/src/app/features/components/account/account-security.component.html:216',
+        'flui-dashboard/src/app/features/components/account/account-security.component.html:266',
       ]
-    notes: 'Hidden from the user menu for demo visitors (console-topbar.ts:99); a visitor opening it sees that the demo is read-only. flui account password, totp, remove-passkey and unlink only point to this page.'
+    notes: 'Hidden from the user menu for demo visitors (console-topbar.ts:98); a visitor opening it sees "This demo is read-only". With local sign-in the page shows the Profile information and Change password panels from Settings instead. flui account password, totp, remove-passkey and unlink only point to this page.'
