@@ -2,6 +2,29 @@
   "schemaVersion": 2,
   "releases": [
     {
+      "version": "0.16.0-rc.3",
+      "publishedAt": "2026-11-26T09:52:56.711Z",
+      "bootstrapRef": "6545479",
+      "images": {
+        "fluiApi": "0.16.0-rc.3",
+        "fluiWeb": "0.16.0-rc.3",
+        "fluiAuthz": "0.8.0"
+      },
+      "notes": [
+        "Brings the redesigned console: a calmer, denser interface that works on small screens and from the keyboard. Also names the GitHub credential that stopped working instead of failing with a generic error, and lists what the in-product assistant did in the agent activity."
+      ],
+      "migrations": 0,
+      "requiresBootstrap": false,
+      "k3s": {
+        "version": "v1.35.4+k3s1"
+      },
+      "systemComponents": {
+        "certManager": "v1.17.1",
+        "systemUpgradeController": "v0.20.2"
+      },
+      "manifestSets": []
+    },
+    {
       "version": "0.16.0-rc.2",
       "publishedAt": "2026-11-22T09:00:14.929Z",
       "bootstrapRef": "6545479",
