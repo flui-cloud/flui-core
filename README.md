@@ -80,7 +80,6 @@ In about five minutes, depending on the machine and its network, you get a runni
 - An application runs on one cluster. Flui does not spread one app across clusters, connect apps on different clusters to each other, or fail over between providers.
 - Servers must run Ubuntu 22.04 or 24.04.
 - DNS records need a zone on a provider Flui can drive. Without one, an app gets a `nip.io` name, or you point your domain yourself.
-- Flui is in alpha.
 
 ## Describe your app in flui.yaml
 
